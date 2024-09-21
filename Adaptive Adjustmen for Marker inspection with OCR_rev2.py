@@ -108,7 +108,7 @@ def process_image(image):
     x1, y1, x2, y2 = crop_coords
     cropped = image[y1:y2, x1:x2]
 
-    # Convert the frame to grayscale
+    # Convert the cropped frame to grayscale
     gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
 
     # Remove noise from the grayscale image
@@ -121,14 +121,14 @@ def process_image(image):
     # Apply morphological operations to the binary image
     morphed = apply_morphology(thresh, morph_kernel_size)
 
-    # Draw crop area on the frame for real-time reference
-    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    # Draw crop area on the original frame (instead of the cropped image) for real-time reference
+    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green rectangle for the crop region
 
-    # Combine the original grayscale image and the morphed image side by side
+    # Combine the original grayscale cropped image and the morphed image side by side for debugging
     combined = np.hstack((gray, morphed))
 
     if OCR:
-        # Perform OCR on the processed frame
+        # Perform OCR on the processed cropped frame
         custom_config = r'--oem 3 --psm 6'
         ocr_result = pytesseract.image_to_string(morphed, config=custom_config)
 
@@ -139,13 +139,14 @@ def process_image(image):
         match_result = "OK" if detected_text == target_string else "Not match"
 
         # Display the detected text and the result on the combined image
-        cv2.putText(combined, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(combined, f"Result: {match_result}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(image, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(image, f"Result: {match_result}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
 
-    # Display the combined image
-    cv2.imshow('OCR Real-time Threshold Video', combined)
+    # Display the original frame with the crop area highlighted
+    cv2.imshow('OCR Real-time Threshold Video', image)
 
     return detected_text
+
 
 def main():
     detected_text = ""
