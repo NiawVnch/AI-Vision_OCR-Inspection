@@ -24,17 +24,21 @@ if real_time_mode:
 # Define the target string
 target_string = "0123456789AB"
 
-# Function to update trackbars
-def update(val):
-    pass
-
 # Function to save parameters to a CSV file
-def save_parameters(block_size, c, blur_kernel_size, morph_kernel_size, threshold_type):
-    print("Saving parameters...")  # Debugging statement
+def save_parameters():
+    # Get current positions of trackbars
+    block_size = cv2.getTrackbarPos('Block Size', 'OCR Real-time Threshold Video')
+    c = cv2.getTrackbarPos('C', 'OCR Real-time Threshold Video')
+    blur_kernel_size = cv2.getTrackbarPos('Blur Kernel Size', 'OCR Real-time Threshold Video')
+    morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Real-time Threshold Video')
+    threshold_type = cv2.getTrackbarPos('Threshold Type', 'OCR Real-time Threshold Video')
+
+    # Save the parameters to a CSV file
     with open('parameters.csv', mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['Crop Coordinate', 'Block Size', 'C', 'Blur Kernel Size', 'Morph Kernel Size', 'Threshold Type'])
         writer.writerow([str(crop_coords), block_size, c, blur_kernel_size, morph_kernel_size, threshold_type])
+
     print(f"Saved parameters: Block Size={block_size}, C={c}, Blur Kernel Size={blur_kernel_size}, Morph Kernel Size={morph_kernel_size}, Threshold Type={threshold_type}")  # Debugging statement
 
 # Function to load parameters from a CSV file
@@ -53,15 +57,19 @@ def load_parameters():
 # Load parameters before creating trackbars
 crop_coords, block_size, c, blur_kernel_size, morph_kernel_size, threshold_type = load_parameters()
 
+# Callback function to update and save parameters when a trackbar is adjusted
+def update_and_save(val):
+    save_parameters()  # Save parameters when a trackbar is updated
+
 # Create a window
 cv2.namedWindow('OCR Real-time Threshold Video')
 
 # Create trackbars for block size, constant, and GaussianBlur and morphology kernel sizes
-cv2.createTrackbar('Block Size', 'OCR Real-time Threshold Video', block_size, 255, update)
-cv2.createTrackbar('C', 'OCR Real-time Threshold Video', c, 100, update)
-cv2.createTrackbar('Blur Kernel Size', 'OCR Real-time Threshold Video', blur_kernel_size, 50, update)
-cv2.createTrackbar('Morph Kernel Size', 'OCR Real-time Threshold Video', morph_kernel_size, 50, update)
-cv2.createTrackbar('Threshold Type', 'OCR Real-time Threshold Video', threshold_type, 1, update)  # 0 for THRESH_BINARY, 1 for THRESH_BINARY_INV
+cv2.createTrackbar('Block Size', 'OCR Real-time Threshold Video', block_size, 255, update_and_save)
+cv2.createTrackbar('C', 'OCR Real-time Threshold Video', c, 100, update_and_save)
+cv2.createTrackbar('Blur Kernel Size', 'OCR Real-time Threshold Video', blur_kernel_size, 50, update_and_save)
+cv2.createTrackbar('Morph Kernel Size', 'OCR Real-time Threshold Video', morph_kernel_size, 50, update_and_save)
+cv2.createTrackbar('Threshold Type', 'OCR Real-time Threshold Video', threshold_type, 1, update_and_save)  # 0 for THRESH_BINARY, 1 for THRESH_BINARY_INV
 
 # Function to remove noise from the image
 def remove_noise(image, kernel_size):
@@ -191,12 +199,7 @@ def main():
                         break
 
                 # After the loop exits, ensure final parameters are saved
-                block_size = cv2.getTrackbarPos('Block Size', 'OCR Real-time Threshold Video')
-                c = cv2.getTrackbarPos('C', 'OCR Real-time Threshold Video')
-                blur_kernel_size = cv2.getTrackbarPos('Blur Kernel Size', 'OCR Real-time Threshold Video')
-                morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Real-time Threshold Video')
-                threshold_type = cv2.getTrackbarPos('Threshold Type', 'OCR Real-time Threshold Video')
-                save_parameters(block_size, c, blur_kernel_size, morph_kernel_size, threshold_type)
+                save_parameters()
             else:
                 print("Image file not found.")
 
