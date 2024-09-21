@@ -86,6 +86,9 @@ def send_ocr_result(result):
     print(f"Sent OCR result to server: {result}")
 
 def process_image(image):
+    # Initialize detected_text to an empty string in case OCR is not enabled
+    detected_text = ""
+
     # Get current positions of trackbars
     block_size = cv2.getTrackbarPos('Block Size', 'OCR Real-time Threshold Video')
     c = cv2.getTrackbarPos('C', 'OCR Real-time Threshold Video')
