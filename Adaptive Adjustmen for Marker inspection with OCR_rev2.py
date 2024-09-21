@@ -124,8 +124,16 @@ def process_image(image):
     # Draw crop area on the original frame (instead of the cropped image) for real-time reference
     cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green rectangle for the crop region
 
-    # Combine the original grayscale cropped image and the morphed image side by side for debugging
-    combined = np.hstack((gray, morphed))
+    # Combine the original image and the thresholded image side by side
+    original_with_rect = image.copy()  # Copy the original image to add the rectangle without modifying it
+    # Resize the thresholded image to match the height of the original image for side-by-side display
+    resized_thresh = cv2.resize(morphed, (image.shape[1], image.shape[0]))
+    
+    # Convert thresholded image to BGR to display it alongside the original
+    threshold_bgr = cv2.cvtColor(resized_thresh, cv2.COLOR_GRAY2BGR)
+
+    # Stack original image and threshold image side by side
+    combined = np.hstack((original_with_rect, threshold_bgr))
 
     if OCR:
         # Perform OCR on the processed cropped frame
@@ -139,13 +147,14 @@ def process_image(image):
         match_result = "OK" if detected_text == target_string else "Not match"
 
         # Display the detected text and the result on the combined image
-        cv2.putText(image, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(image, f"Result: {match_result}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(combined, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(combined, f"Result: {match_result}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
 
-    # Display the original frame with the crop area highlighted
-    cv2.imshow('OCR Real-time Threshold Video', image)
+    # Display the combined original and thresholded images side by side
+    cv2.imshow('OCR Real-time Threshold Video', combined)
 
     return detected_text
+
 
 
 def main():
