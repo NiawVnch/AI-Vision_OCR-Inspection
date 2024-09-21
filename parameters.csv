@@ -1,2 +1,2 @@
-Block Size,C,Blur Kernel Size,Morph Kernel Size,Threshold Type
-54,14,6,3,1
+Crop Coordinate,Block Size,C,Blur Kernel Size,Morph Kernel Size,Threshold Type
+"(122, 161, 330, 197)",54,14,6,3,1
