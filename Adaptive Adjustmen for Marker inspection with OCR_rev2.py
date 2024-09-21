@@ -12,8 +12,8 @@ real_time_mode = True
 # Specify the path to the image file
 image_path = "GrayCO2.JPEG"
 
-# OCR = True
-OCR = False
+OCR = True
+# OCR = False
 
 # Initialize the camera (only used in real-time mode)
 if real_time_mode:
@@ -80,10 +80,14 @@ def apply_morphology(binary_image, kernel_size):
 def send_ocr_result(result):
     server_ip = "192.168.0.100"  # Replace with actual server IP
     server_port = 12345  # Replace with the actual port
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.connect((server_ip, server_port))
-        s.sendall(result.encode())
-    print(f"Sent OCR result to server: {result}")
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(5)  # Set a 5-second timeout for the socket connection
+            s.connect((server_ip, server_port))
+            s.sendall(result.encode())
+            print(f"Sent OCR result to server: {result}")
+    except (socket.timeout, socket.error) as e:
+        print(f"Error: Could not send OCR result to server. {e}")
 
 def process_image(image):
     # Initialize detected_text to an empty string in case OCR is not enabled
@@ -126,14 +130,9 @@ def process_image(image):
 
     # Combine the original image and the thresholded image side by side
     original_with_rect = image.copy()  # Copy the original image to add the rectangle without modifying it
-    # Resize the thresholded image to match the height of the original image for side-by-side display
-    resized_thresh = cv2.resize(morphed, (image.shape[1], image.shape[0]))
-    
-    # Convert thresholded image to BGR to display it alongside the original
-    threshold_bgr = cv2.cvtColor(resized_thresh, cv2.COLOR_GRAY2BGR)
-
-    # Stack original image and threshold image side by side
-    combined = np.hstack((original_with_rect, threshold_bgr))
+    resized_thresh = cv2.resize(morphed, (image.shape[1], image.shape[0]))  # Resize thresholded image to match
+    threshold_bgr = cv2.cvtColor(resized_thresh, cv2.COLOR_GRAY2BGR)  # Convert threshold to BGR for side by side
+    combined = np.hstack((original_with_rect, threshold_bgr))  # Combine images side by side
 
     if OCR:
         # Perform OCR on the processed cropped frame
@@ -155,34 +154,16 @@ def process_image(image):
 
     return detected_text
 
-
-
 def main():
     detected_text = ""
-    if real_time_mode:
-        while True:
-            for _ in range(1):
-                cap.read()
-            ret, frame = cap.read()
-            if not ret:
-                break
-
-            detected_text = process_image(frame)
-
-            # Capture result when 'c' is pressed
-            if cv2.waitKey(1) & 0xFF == ord('c'):
-                print(f"OCR Capture: {detected_text}")
-                if detected_text:
-                    send_ocr_result(detected_text)
-
-            # Break the loop on 'q' key press
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-    else:
-        if os.path.exists(image_path):
-            image = cv2.imread(image_path)
+    try:
+        if real_time_mode:
             while True:
-                detected_text = process_image(image)
+                ret, frame = cap.read()
+                if not ret:
+                    break
+
+                detected_text = process_image(frame)
 
                 # Capture result when 'c' is pressed
                 if cv2.waitKey(1) & 0xFF == ord('c'):
@@ -193,20 +174,37 @@ def main():
                 # Break the loop on 'q' key press
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
-
-            # After the loop exits, ensure final parameters are saved
-            block_size = cv2.getTrackbarPos('Block Size', 'OCR Real-time Threshold Video')
-            c = cv2.getTrackbarPos('C', 'OCR Real-time Threshold Video')
-            blur_kernel_size = cv2.getTrackbarPos('Blur Kernel Size', 'OCR Real-time Threshold Video')
-            morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Real-time Threshold Video')
-            threshold_type = cv2.getTrackbarPos('Threshold Type', 'OCR Real-time Threshold Video')
-            save_parameters(block_size, c, blur_kernel_size, morph_kernel_size, threshold_type)
         else:
-            print("Image file not found.")
+            if os.path.exists(image_path):
+                image = cv2.imread(image_path)
+                while True:
+                    detected_text = process_image(image)
 
-    if real_time_mode:
-        cap.release()
-    cv2.destroyAllWindows()
+                    # Capture result when 'c' is pressed
+                    if cv2.waitKey(1) & 0xFF == ord('c'):
+                        print(f"OCR Capture: {detected_text}")
+                        if detected_text:
+                            send_ocr_result(detected_text)
+
+                    # Break the loop on 'q' key press
+                    if cv2.waitKey(1) & 0xFF == ord('q'):
+                        break
+
+                # After the loop exits, ensure final parameters are saved
+                block_size = cv2.getTrackbarPos('Block Size', 'OCR Real-time Threshold Video')
+                c = cv2.getTrackbarPos('C', 'OCR Real-time Threshold Video')
+                blur_kernel_size = cv2.getTrackbarPos('Blur Kernel Size', 'OCR Real-time Threshold Video')
+                morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Real-time Threshold Video')
+                threshold_type = cv2.getTrackbarPos('Threshold Type', 'OCR Real-time Threshold Video')
+                save_parameters(block_size, c, blur_kernel_size, morph_kernel_size, threshold_type)
+            else:
+                print("Image file not found.")
+
+    finally:
+        # Release resources even if an error occurs
+        if real_time_mode and cap.isOpened():
+            cap.release()
+        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
