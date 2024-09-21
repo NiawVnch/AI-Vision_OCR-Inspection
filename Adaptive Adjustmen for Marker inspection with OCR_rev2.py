@@ -4,48 +4,64 @@ import csv
 import os
 import numpy as np
 import socket
-import tkinter as tk
-from tkinter import ttk
-from PIL import Image, ImageTk
 
-# TCP/IP Server address and port
-server_ip = "127.0.0.1"
-server_port = 12345
+# Set the mode
+real_time_mode = True
+# real_time_mode = False
 
-# Load parameters from CSV
+# Specify the path to the image file
+image_path = "GrayCO2.JPEG"
+
+# OCR = True
+OCR = False
+
+# Initialize the camera (only used in real-time mode)
+if real_time_mode:
+    cap = cv2.VideoCapture(5)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+
+# Define the target string
+target_string = "0123456789AB"
+
+# Function to update trackbars
+def update(val):
+    pass
+
+# Function to save parameters to a CSV file
+def save_parameters(block_size, c, blur_kernel_size, morph_kernel_size, threshold_type):
+    print("Saving parameters...")  # Debugging statement
+    with open('parameters.csv', mode='w', newline='') as file:
+        writer = csv.writer(file)
+        writer.writerow(['Crop Coordinate', 'Block Size', 'C', 'Blur Kernel Size', 'Morph Kernel Size', 'Threshold Type'])
+        writer.writerow([str(crop_coords), block_size, c, blur_kernel_size, morph_kernel_size, threshold_type])
+    print(f"Saved parameters: Block Size={block_size}, C={c}, Blur Kernel Size={blur_kernel_size}, Morph Kernel Size={morph_kernel_size}, Threshold Type={threshold_type}")  # Debugging statement
+
+# Function to load parameters from a CSV file
 def load_parameters():
     if os.path.exists('parameters.csv'):
         with open('parameters.csv', mode='r') as file:
             reader = csv.reader(file)
             next(reader)  # Skip header
             params = next(reader)
-            print(f"Loaded parameters: {params}")
-            crop_coords = eval(params[0])  # Convert string to tuple
+            crop_coords = eval(params[0])  # Evaluate the string as a tuple
+            print(f"Loaded parameters: {params}")  # Debugging statement
             return crop_coords, int(params[1]), int(params[2]), int(params[3]), int(params[4]), int(params[5])
-    print("Loading default parameters...")
-    return (0, 0, 640, 480), 11, 2, 5, 3, 0  # Default values
+    print("Loading default parameters...")  # Debugging statement
+    return (100, 100, 200, 200), 11, 2, 5, 3, 0  # Default values
 
-# Save parameters to CSV
-def save_parameters(crop_coords, block_size, c, blur_kernel_size, morph_kernel_size, threshold_type):
-    print("Saving parameters...")
-    with open('parameters.csv', mode='w', newline='') as file:
-        writer = csv.writer(file)
-        writer.writerow(['Crop Coordinate', 'Block Size', 'C', 'Blur Kernel Size', 'Morph Kernel Size', 'Threshold Type'])
-        writer.writerow([crop_coords, block_size, c, blur_kernel_size, morph_kernel_size, threshold_type])
-    print(f"Saved parameters: {crop_coords}, Block Size={block_size}, C={c}, Blur Kernel Size={blur_kernel_size}, Morph Kernel Size={morph_kernel_size}, Threshold Type={threshold_type}")
-
-# Initialize parameters
+# Load parameters before creating trackbars
 crop_coords, block_size, c, blur_kernel_size, morph_kernel_size, threshold_type = load_parameters()
 
-# Function to send OCR result to the server via TCP/IP
-def send_ocr_result(result):
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.connect((server_ip, server_port))
-            s.sendall(result.encode())
-            print(f"Sent OCR result to server: {result}")
-    except ConnectionError as e:
-        print(f"Error sending OCR result: {e}")
+# Create a window
+cv2.namedWindow('OCR Real-time Threshold Video')
+
+# Create trackbars for block size, constant, and GaussianBlur and morphology kernel sizes
+cv2.createTrackbar('Block Size', 'OCR Real-time Threshold Video', block_size, 255, update)
+cv2.createTrackbar('C', 'OCR Real-time Threshold Video', c, 100, update)
+cv2.createTrackbar('Blur Kernel Size', 'OCR Real-time Threshold Video', blur_kernel_size, 50, update)
+cv2.createTrackbar('Morph Kernel Size', 'OCR Real-time Threshold Video', morph_kernel_size, 50, update)
+cv2.createTrackbar('Threshold Type', 'OCR Real-time Threshold Video', threshold_type, 1, update)  # 0 for THRESH_BINARY, 1 for THRESH_BINARY_INV
 
 # Function to remove noise from the image
 def remove_noise(image, kernel_size):
@@ -60,10 +76,24 @@ def apply_morphology(binary_image, kernel_size):
     morphed = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel)
     return morphed
 
-# Function to process and perform OCR on the image
-def process_image(image):
-    global crop_coords, block_size, c, blur_kernel_size, morph_kernel_size, threshold_type
+# Function to send OCR result to server via TCP/IP
+def send_ocr_result(result):
+    server_ip = "192.168.0.100"  # Replace with actual server IP
+    server_port = 12345  # Replace with the actual port
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.connect((server_ip, server_port))
+        s.sendall(result.encode())
+    print(f"Sent OCR result to server: {result}")
 
+def process_image(image):
+    # Get current positions of trackbars
+    block_size = cv2.getTrackbarPos('Block Size', 'OCR Real-time Threshold Video')
+    c = cv2.getTrackbarPos('C', 'OCR Real-time Threshold Video')
+    blur_kernel_size = cv2.getTrackbarPos('Blur Kernel Size', 'OCR Real-time Threshold Video')
+    morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Real-time Threshold Video')
+    threshold_type = cv2.getTrackbarPos('Threshold Type', 'OCR Real-time Threshold Video')
+
+    # Ensure block_size is odd and greater than 1
     if block_size % 2 == 0:
         block_size += 1
     if block_size < 3:
@@ -71,107 +101,98 @@ def process_image(image):
     if morph_kernel_size < 3:
         morph_kernel_size = 3
 
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    cropped_gray = gray[crop_coords[1]:crop_coords[3], crop_coords[0]:crop_coords[2]]
+    # Crop the image using loaded coordinates
+    x1, y1, x2, y2 = crop_coords
+    cropped = image[y1:y2, x1:x2]
 
-    denoised = remove_noise(cropped_gray, blur_kernel_size)
+    # Convert the frame to grayscale
+    gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
+
+    # Remove noise from the grayscale image
+    denoised = remove_noise(gray, blur_kernel_size)
+
+    # Apply adaptive thresholding to preprocess the image
     threshold_method = cv2.THRESH_BINARY if threshold_type == 0 else cv2.THRESH_BINARY_INV
     thresh = cv2.adaptiveThreshold(denoised, 255, cv2.ADAPTIVE_THRESH_MEAN_C, threshold_method, block_size, c)
+
+    # Apply morphological operations to the binary image
     morphed = apply_morphology(thresh, morph_kernel_size)
 
-    combined = np.hstack((cropped_gray, morphed))
+    # Draw crop area on the frame for real-time reference
+    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-    custom_config = r'--oem 3 --psm 6'
-    ocr_result = pytesseract.image_to_string(morphed, config=custom_config)
-    detected_text = ''.join(filter(str.isalnum, ocr_result))
+    # Combine the original grayscale image and the morphed image side by side
+    combined = np.hstack((gray, morphed))
 
-    return detected_text, combined
+    if OCR:
+        # Perform OCR on the processed frame
+        custom_config = r'--oem 3 --psm 6'
+        ocr_result = pytesseract.image_to_string(morphed, config=custom_config)
 
-# Capture frame and process OCR
-def capture_frame():
-    global frame
-    detected_text, processed_frame = process_image(frame)
-    print(f"Captured text: {detected_text}")
-    send_ocr_result(detected_text)
-    cv2.imshow('Captured Image', processed_frame)
+        # Remove any extra characters or spaces
+        detected_text = ''.join(filter(str.isalnum, ocr_result))
 
-# Main loop for the real-time video feed
-def update_video_feed():
-    global frame, cap
-    ret, frame = cap.read()
-    if ret:
-        # Draw crop rectangle on the frame
-        cv2.rectangle(frame, (crop_coords[0], crop_coords[1]), (crop_coords[2], crop_coords[3]), (0, 255, 0), 2)
+        # Compare the detected text with the target string
+        match_result = "OK" if detected_text == target_string else "Not match"
 
-        # Convert frame to Tkinter-compatible image and display in the GUI
-        img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        img = Image.fromarray(img)
-        imgtk = ImageTk.PhotoImage(image=img)
-        video_label.imgtk = imgtk
-        video_label.configure(image=imgtk)
+        # Display the detected text and the result on the combined image
+        cv2.putText(combined, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(combined, f"Result: {match_result}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
 
-    video_label.after(10, update_video_feed)
+    # Display the combined image
+    cv2.imshow('OCR Real-time Threshold Video', combined)
 
-# Initialize OpenCV trackbars for adjusting parameters in real-time
-def setup_opencv_trackbars():
-    cv2.namedWindow('Trackbars')
-    
-    # Trackbars for adjusting the parameters
-    cv2.createTrackbar('Block Size', 'Trackbars', block_size, 255, lambda x: None)
-    cv2.createTrackbar('C', 'Trackbars', c, 100, lambda x: None)
-    cv2.createTrackbar('Blur Kernel Size', 'Trackbars', blur_kernel_size, 50, lambda x: None)
-    cv2.createTrackbar('Morph Kernel Size', 'Trackbars', morph_kernel_size, 50, lambda x: None)
-    cv2.createTrackbar('Threshold Type', 'Trackbars', threshold_type, 1, lambda x: None)
+    return detected_text
 
-# Update the parameters from OpenCV trackbars
-def update_parameters():
-    global block_size, c, blur_kernel_size, morph_kernel_size, threshold_type
-    
-    # Get current positions of trackbars
-    block_size = cv2.getTrackbarPos('Block Size', 'Trackbars')
-    c = cv2.getTrackbarPos('C', 'Trackbars')
-    blur_kernel_size = cv2.getTrackbarPos('Blur Kernel Size', 'Trackbars')
-    morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'Trackbars')
-    threshold_type = cv2.getTrackbarPos('Threshold Type', 'Trackbars')
-
-    # Ensure trackbars update the parameters
-    update_video_feed()
-    video_label.after(100, update_parameters)  # Keep updating the parameters every 100ms
-
-# Initialize the Tkinter GUI
-def setup_gui():
-    global root, video_label
-    root = tk.Tk()
-    root.title("OCR Real-time Video Feed")
-
-    # Create a label in the GUI to display video
-    video_label = tk.Label(root)
-    video_label.pack()
-
-    # Create Capture button
-    capture_button = ttk.Button(root, text="Capture", command=capture_frame)
-    capture_button.pack()
-
-    # Start updating the video feed
-    update_video_feed()
-
-    # Update OpenCV trackbar parameters in real-time
-    update_parameters()
-
-    # Start the Tkinter event loop
-    root.mainloop()
-
-# Initialize the video capture
 def main():
-    global cap
-    cap = cv2.VideoCapture(5)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
+    detected_text = ""
+    if real_time_mode:
+        while True:
+            for _ in range(1):
+                cap.read()
+            ret, frame = cap.read()
+            if not ret:
+                break
 
-    setup_opencv_trackbars()  # Initialize OpenCV trackbars for parameter adjustment
-    setup_gui()
+            detected_text = process_image(frame)
 
-    cap.release()
+            # Capture result when 'c' is pressed
+            if cv2.waitKey(1) & 0xFF == ord('c'):
+                print(f"OCR Capture: {detected_text}")
+                if detected_text:
+                    send_ocr_result(detected_text)
+
+            # Break the loop on 'q' key press
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+    else:
+        if os.path.exists(image_path):
+            image = cv2.imread(image_path)
+            while True:
+                detected_text = process_image(image)
+
+                # Capture result when 'c' is pressed
+                if cv2.waitKey(1) & 0xFF == ord('c'):
+                    print(f"OCR Capture: {detected_text}")
+                    if detected_text:
+                        send_ocr_result(detected_text)
+
+                # Break the loop on 'q' key press
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+
+            # After the loop exits, ensure final parameters are saved
+            block_size = cv2.getTrackbarPos('Block Size', 'OCR Real-time Threshold Video')
+            c = cv2.getTrackbarPos('C', 'OCR Real-time Threshold Video')
+            blur_kernel_size = cv2.getTrackbarPos('Blur Kernel Size', 'OCR Real-time Threshold Video')
+            morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Real-time Threshold Video')
+            threshold_type = cv2.getTrackbarPos('Threshold Type', 'OCR Real-time Threshold Video')
+            save_parameters(block_size, c, blur_kernel_size, morph_kernel_size, threshold_type)
+        else:
+            print("Image file not found.")
+
+    if real_time_mode:
+        cap.release()
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
