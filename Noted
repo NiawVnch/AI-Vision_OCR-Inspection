@@ -155,11 +155,6 @@ def process_image(image):
     # Draw crop area on the original frame (instead of the cropped image) for real-time reference
     cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green rectangle for the crop region
 
-    # Combine the original image and the thresholded image side by side
-    original_with_rect = image.copy()  # Copy the original image to add the rectangle without modifying it
-    resized_thresh = cv2.resize(morphed, (image.shape[1], image.shape[0]))  # Resize thresholded image to match
-    threshold_bgr = cv2.cvtColor(resized_thresh, cv2.COLOR_GRAY2BGR)  # Convert threshold to BGR for side by side
-
     # If OCR is enabled, perform OCR and draw bounding boxes on threshold image
     if OCR:
         # Perform OCR on the processed cropped frame
@@ -172,8 +167,10 @@ def process_image(image):
         # Get bounding box information for each detected character
         boxes = pytesseract.image_to_boxes(morphed, config=custom_config)
 
-        # Draw bounding boxes on the threshold image
+        # Draw bounding boxes on the threshold image BEFORE resizing
         h, w = morphed.shape  # height and width of the thresholded image
+        threshold_bgr = cv2.cvtColor(morphed, cv2.COLOR_GRAY2BGR)  # Convert thresholded image to BGR to draw colored boxes
+
         for box in boxes.splitlines():
             box = box.split()
             x, y, x2, y2 = int(box[1]), int(box[2]), int(box[3]), int(box[4])
@@ -184,12 +181,16 @@ def process_image(image):
         # Compare the detected text with the target string
         match_result = "OK" if detected_text == target_string else "Not match"
 
-        # Display the detected text and the result on the combined image
+        # Display the detected text and the result on the thresholded image
         cv2.putText(threshold_bgr, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
         cv2.putText(threshold_bgr, f"Result: {match_result}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
 
-    # Combine images side by side
-    combined = np.hstack((original_with_rect, threshold_bgr))
+    # Resize the thresholded image with bounding boxes to match the original image's size for side-by-side display
+    resized_thresh = cv2.resize(threshold_bgr, (image.shape[1], image.shape[0]))
+
+    # Combine the original image and the thresholded image side by side
+    original_with_rect = image.copy()  # Copy the original image to add the rectangle without modifying it
+    combined = np.hstack((original_with_rect, resized_thresh))  # Combine images side by side
 
     # Display the combined original and thresholded images side by side
     cv2.imshow('OCR Real-time Threshold Video', combined)
@@ -245,4 +246,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
