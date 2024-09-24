@@ -37,8 +37,6 @@ OCR = True
 # Initialize the camera (only used in real-time mode)
 if real_time_mode:
     cap = cv2.VideoCapture(5)
-    #cap.set(cv2.CAP_PROP_FRAME_WIDTH, 320)
-    #cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 240)
 
     # Set the frame rate
     fps = 30  # Desired frame rate (fps)
@@ -61,8 +59,6 @@ def save_parameters():
         writer = csv.writer(file)
         writer.writerow(['Crop Coordinate', 'Block Size', 'C', 'Blur Kernel Size', 'Morph Kernel Size', 'Threshold Type'])
         writer.writerow([str(crop_coords), block_size, c, blur_kernel_size, morph_kernel_size, threshold_type])
-
-    #print(f"Saved parameters: Block Size={block_size}, C={c}, Blur Kernel Size={blur_kernel_size}, Morph Kernel Size={morph_kernel_size}, Threshold Type={threshold_type}")  # Debugging statement
 
 # Function to load parameters from a CSV file
 def load_parameters():
@@ -138,8 +134,6 @@ def process_image(image):
         block_size = 3
     if morph_kernel_size < 1:
         morph_kernel_size = 1
-    #if blur_kernel_size < 1:
-    #   blur_kernel_size = 1
 
     # Crop the image using loaded coordinates
     x1, y1, x2, y2 = crop_coords
@@ -151,15 +145,9 @@ def process_image(image):
     # Remove noise from the grayscale image
     denoised = remove_noise(gray, blur_kernel_size)
 
-
     # Apply adaptive thresholding to preprocess the image
     threshold_method = cv2.THRESH_BINARY if threshold_type == 0 else cv2.THRESH_BINARY_INV
     thresh = cv2.adaptiveThreshold(denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, threshold_method, block_size, c)
-
-    
-    # Apply threshold to make barcode clearer (optional, may need tuning)
-    #_, thresh = cv2.threshold(denoised, 128, 255, cv2.THRESH_BINARY)
-
 
     # Apply morphological operations to the binary image
     morphed = apply_morphology(thresh, morph_kernel_size)
@@ -171,8 +159,8 @@ def process_image(image):
     original_with_rect = image.copy()  # Copy the original image to add the rectangle without modifying it
     resized_thresh = cv2.resize(morphed, (image.shape[1], image.shape[0]))  # Resize thresholded image to match
     threshold_bgr = cv2.cvtColor(resized_thresh, cv2.COLOR_GRAY2BGR)  # Convert threshold to BGR for side by side
-    combined = np.hstack((original_with_rect, threshold_bgr))  # Combine images side by side
 
+    # If OCR is enabled, perform OCR and draw bounding boxes on threshold image
     if OCR:
         # Perform OCR on the processed cropped frame
         custom_config = r'--oem 3 --psm 6'
@@ -181,12 +169,27 @@ def process_image(image):
         # Remove any extra characters or spaces
         detected_text = ''.join(filter(str.isalnum, ocr_result))
 
+        # Get bounding box information for each detected character
+        boxes = pytesseract.image_to_boxes(morphed, config=custom_config)
+
+        # Draw bounding boxes on the threshold image
+        h, w = morphed.shape  # height and width of the thresholded image
+        for box in boxes.splitlines():
+            box = box.split()
+            x, y, x2, y2 = int(box[1]), int(box[2]), int(box[3]), int(box[4])
+            y = h - y  # Flip the y coordinate for OpenCV's format
+            y2 = h - y2
+            cv2.rectangle(threshold_bgr, (x, y2), (x2, y), (0, 255, 0), 2)  # Draw green boxes around detected characters
+
         # Compare the detected text with the target string
         match_result = "OK" if detected_text == target_string else "Not match"
 
         # Display the detected text and the result on the combined image
-        cv2.putText(combined, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
-        cv2.putText(combined, f"Result: {match_result}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2, cv2.LINE_AA)
+        cv2.putText(threshold_bgr, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+        cv2.putText(threshold_bgr, f"Result: {match_result}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+
+    # Combine images side by side
+    combined = np.hstack((original_with_rect, threshold_bgr))
 
     # Display the combined original and thresholded images side by side
     cv2.imshow('OCR Real-time Threshold Video', combined)
@@ -242,3 +245,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
