@@ -17,6 +17,8 @@ actual_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
 actual_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
 actual_fps = cap.get(cv2.CAP_PROP_FPS)
 
+--------------------------------------------------------------------------
+
 import cv2
 import pytesseract
 import csv
@@ -181,9 +183,9 @@ def process_image(image):
         # Compare the detected text with the target string
         match_result = "OK" if detected_text == target_string else "Not match"
 
-        # Display the detected text and the result on the thresholded image
-        cv2.putText(threshold_bgr, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
-        cv2.putText(threshold_bgr, f"Result: {match_result}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+        # Display the detected text and the result on the left side (original_with_rect)
+        cv2.putText(image, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
+        cv2.putText(image, f"Result: {match_result}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
 
     # Resize the thresholded image with bounding boxes to match the original image's size for side-by-side display
     resized_thresh = cv2.resize(threshold_bgr, (image.shape[1], image.shape[0]))
