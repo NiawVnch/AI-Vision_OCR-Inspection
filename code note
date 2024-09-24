@@ -2,6 +2,7 @@ import cv2
 import pytesseract
 import csv
 import os
+import re
 import numpy as np
 import socket
 from collections import deque
@@ -24,8 +25,8 @@ if real_time_mode:
     fps = 25  # Desired frame rate (fps)
     cap.set(cv2.CAP_PROP_FPS, fps)
 
-# Define the target string
-target_string = "0123456789AB"
+# Define the target string and expected pattern (A followed by digits)
+expected_pattern = r'A\d{10}'  # Matches 'A' followed by exactly 10 digits
 detected_text_history = deque(maxlen=10)  # Keep track of previous OCR results
 
 # Function to save parameters to a CSV file
@@ -106,7 +107,7 @@ def get_stabilized_text(history):
         text_counts[text] = text_counts.get(text, 0) + 1
     return max(text_counts, key=text_counts.get)  # Return the most frequent text
 
-# Function to process image and extract OCR results with confidence
+# Function to process image and extract OCR results
 def process_image(image):
     # Initialize detected_text to an empty string in case OCR is not enabled
     detected_text = ""
@@ -152,19 +153,12 @@ def process_image(image):
 
     # If OCR is enabled, perform OCR and draw bounding boxes on threshold image
     if OCR:
-        # Perform OCR on the processed cropped frame and get OCR data
-        custom_config = r'--oem 3 --psm 6'
-        ocr_data = pytesseract.image_to_data(morphed, config=custom_config, output_type=pytesseract.Output.DICT)
-
-        # Filter text based on confidence
-        detected_text = ""
-        min_confidence_threshold = 60  # Only accept text with confidence above 60%
-        for i in range(len(ocr_data['text'])):
-            if int(ocr_data['conf'][i]) > min_confidence_threshold:
-                detected_text += ocr_data['text'][i]
+        # Perform OCR with a whitelist for digits and specific uppercase letters
+        custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+        ocr_result = pytesseract.image_to_string(morphed, config=custom_config)
 
         # Remove any extra characters or spaces
-        detected_text = ''.join(filter(str.isalnum, detected_text))
+        detected_text = ''.join(filter(str.isalnum, ocr_result))
 
         # Get bounding box information for each detected character
         boxes = pytesseract.image_to_boxes(morphed, config=custom_config)
@@ -180,8 +174,11 @@ def process_image(image):
             y2 = h - y2
             cv2.rectangle(threshold_bgr, (x, y2), (x2, y), (0, 255, 0), 1)  # Draw green boxes around detected characters
 
-        # Compare the detected text with the target string
-        match_result = "OK" if detected_text == target_string else "Not match"
+        # Compare the detected text with the expected pattern
+        if re.match(expected_pattern, detected_text):
+            match_result = "OK"
+        else:
+            match_result = "Not match"
 
         # Display the detected text and the result on the left side (original_with_rect)
         cv2.putText(image, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 1, cv2.LINE_AA)
