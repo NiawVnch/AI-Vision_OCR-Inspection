@@ -4,7 +4,7 @@ import csv
 import os
 import numpy as np
 import socket
-from difflib import SequenceMatcher
+from collections import deque
 
 # Set the mode
 real_time_mode = True
@@ -26,6 +26,7 @@ if real_time_mode:
 
 # Define the target string
 target_string = "0123456789AB"
+detected_text_history = deque(maxlen=10)  # Keep track of previous OCR results
 
 # Function to save parameters to a CSV file
 def save_parameters():
@@ -98,19 +99,15 @@ def send_ocr_result(result):
     except (socket.timeout, socket.error) as e:
         print(f"Error: Could not send OCR result to server. {e}")
 
-# Function to calculate similarity between two strings (Levenshtein-based)
-def is_similar(text1, text2, threshold=0.7):
-    return SequenceMatcher(None, text1, text2).ratio() > threshold
+# Function to calculate average OCR result (stabilize readings)
+def get_stabilized_text(history):
+    text_counts = {}
+    for text in history:
+        text_counts[text] = text_counts.get(text, 0) + 1
+    return max(text_counts, key=text_counts.get)  # Return the most frequent text
 
-# Function to smooth OCR results by comparing consecutive readings
-def smooth_ocr_result(current_text, previous_text, similarity_threshold=0.7):
-    if previous_text is None or is_similar(current_text, previous_text, similarity_threshold):
-        return current_text
-    else:
-        return previous_text
-
-# Function to process each frame and extract the text via OCR
-def process_image(image, previous_text=None):
+# Function to process image and extract OCR results with confidence
+def process_image(image):
     # Initialize detected_text to an empty string in case OCR is not enabled
     detected_text = ""
 
@@ -155,12 +152,19 @@ def process_image(image, previous_text=None):
 
     # If OCR is enabled, perform OCR and draw bounding boxes on threshold image
     if OCR:
-        # Perform OCR on the processed cropped frame
+        # Perform OCR on the processed cropped frame and get OCR data
         custom_config = r'--oem 3 --psm 6'
-        ocr_result = pytesseract.image_to_string(morphed, config=custom_config)
+        ocr_data = pytesseract.image_to_data(morphed, config=custom_config, output_type=pytesseract.Output.DICT)
+
+        # Filter text based on confidence
+        detected_text = ""
+        min_confidence_threshold = 60  # Only accept text with confidence above 60%
+        for i in range(len(ocr_data['text'])):
+            if int(ocr_data['conf'][i]) > min_confidence_threshold:
+                detected_text += ocr_data['text'][i]
 
         # Remove any extra characters or spaces
-        detected_text = ''.join(filter(str.isalnum, ocr_result))
+        detected_text = ''.join(filter(str.isalnum, detected_text))
 
         # Get bounding box information for each detected character
         boxes = pytesseract.image_to_boxes(morphed, config=custom_config)
@@ -175,9 +179,6 @@ def process_image(image, previous_text=None):
             y = h - y  # Flip the y coordinate for OpenCV's format
             y2 = h - y2
             cv2.rectangle(threshold_bgr, (x, y2), (x2, y), (0, 255, 0), 1)  # Draw green boxes around detected characters
-
-        # Smooth the detected text with previous text for consistency
-        detected_text = smooth_ocr_result(detected_text, previous_text)
 
         # Compare the detected text with the target string
         match_result = "OK" if detected_text == target_string else "Not match"
@@ -199,7 +200,7 @@ def process_image(image, previous_text=None):
     return detected_text
 
 def main():
-    previous_text = None  # Track the previous text for smoothing
+    detected_text = ""
     try:
         if real_time_mode:
             while True:
@@ -207,15 +208,19 @@ def main():
                 if not ret:
                     break
 
-                # Process the frame and smooth OCR result
-                detected_text = process_image(frame, previous_text)
-                previous_text = detected_text  # Update the previous text for the next frame
+                detected_text = process_image(frame)
+
+                # Store the detected text in the history for stabilization
+                detected_text_history.append(detected_text)
+
+                # Get the most stable OCR result
+                stable_text = get_stabilized_text(detected_text_history)
 
                 # Capture result when 'c' is pressed
                 if cv2.waitKey(1) & 0xFF == ord('c'):
-                    print(f"OCR Capture: {detected_text}")
-                    if detected_text:
-                        send_ocr_result(detected_text)
+                    print(f"OCR Capture: {stable_text}")
+                    if stable_text:
+                        send_ocr_result(stable_text)
 
                 # Break the loop on 'q' key press
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -224,14 +229,19 @@ def main():
             if os.path.exists(image_path):
                 image = cv2.imread(image_path)
                 while True:
-                    detected_text = process_image(image, previous_text)
-                    previous_text = detected_text  # Update the previous text for smoothing
+                    detected_text = process_image(image)
+
+                    # Store the detected text in the history for stabilization
+                    detected_text_history.append(detected_text)
+
+                    # Get the most stable OCR result
+                    stable_text = get_stabilized_text(detected_text_history)
 
                     # Capture result when 'c' is pressed
                     if cv2.waitKey(1) & 0xFF == ord('c'):
-                        print(f"OCR Capture: {detected_text}")
-                        if detected_text:
-                            send_ocr_result(detected_text)
+                        print(f"OCR Capture: {stable_text}")
+                        if stable_text:
+                            send_ocr_result(stable_text)
 
                     # Break the loop on 'q' key press
                     if cv2.waitKey(1) & 0xFF == ord('q'):
