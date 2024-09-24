@@ -4,35 +4,39 @@ import csv
 import os
 import numpy as np
 import socket
-from collections import deque  # To store and filter recent OCR results
+from difflib import SequenceMatcher
 
 # Set the mode
 real_time_mode = True
+# real_time_mode = False
 
 # Specify the path to the image file
 image_path = "GrayCO2.JPEG"
 
 OCR = True
+# OCR = False
 
 # Initialize the camera (only used in real-time mode)
 if real_time_mode:
     cap = cv2.VideoCapture(5)
-    cap.set(cv2.CAP_PROP_FPS, 25)  # Set the frame rate
+
+    # Set the frame rate
+    fps = 25  # Desired frame rate (fps)
+    cap.set(cv2.CAP_PROP_FPS, fps)
 
 # Define the target string
 target_string = "0123456789AB"
 
-# Initialize a deque to store recent OCR results for consistency filtering
-recent_ocr_results = deque(maxlen=5)  # Adjust maxlen for more or fewer frames in history
-
 # Function to save parameters to a CSV file
 def save_parameters():
+    # Get current positions of trackbars
     block_size = cv2.getTrackbarPos('Block Size', 'OCR Real-time Threshold Video')
     c = cv2.getTrackbarPos('C', 'OCR Real-time Threshold Video')
     blur_kernel_size = cv2.getTrackbarPos('Blur Kernel Size', 'OCR Real-time Threshold Video')
     morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Real-time Threshold Video')
     threshold_type = cv2.getTrackbarPos('Threshold Type', 'OCR Real-time Threshold Video')
 
+    # Save the parameters to a CSV file
     with open('parameters.csv', mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['Crop Coordinate', 'Block Size', 'C', 'Blur Kernel Size', 'Morph Kernel Size', 'Threshold Type'])
@@ -45,11 +49,11 @@ def load_parameters():
             reader = csv.reader(file)
             next(reader)  # Skip header
             params = next(reader)
-            crop_coords = eval(params[0])
-            print(f"Loaded parameters: {params}")
+            crop_coords = eval(params[0])  # Evaluate the string as a tuple
+            print(f"Loaded parameters: {params}")  # Debugging statement
             return crop_coords, int(params[1]), int(params[2]), int(params[3]), int(params[4]), int(params[5])
-    print("Loading default parameters...")
-    return (100, 100, 200, 200), 11, 2, 5, 3, 0
+    print("Loading default parameters...")  # Debugging statement
+    return (100, 100, 200, 200), 11, 2, 5, 3, 0  # Default values
 
 # Load parameters before creating trackbars
 crop_coords, block_size, c, blur_kernel_size, morph_kernel_size, threshold_type = load_parameters()
@@ -66,7 +70,7 @@ cv2.createTrackbar('Block Size', 'OCR Real-time Threshold Video', block_size, 25
 cv2.createTrackbar('C', 'OCR Real-time Threshold Video', c, 100, update_and_save)
 cv2.createTrackbar('Blur Kernel Size', 'OCR Real-time Threshold Video', blur_kernel_size, 50, update_and_save)
 cv2.createTrackbar('Morph Kernel Size', 'OCR Real-time Threshold Video', morph_kernel_size, 50, update_and_save)
-cv2.createTrackbar('Threshold Type', 'OCR Real-time Threshold Video', threshold_type, 1, update_and_save)
+cv2.createTrackbar('Threshold Type', 'OCR Real-time Threshold Video', threshold_type, 1, update_and_save)  # 0 for THRESH_BINARY, 1 for THRESH_BINARY_INV
 
 # Function to remove noise from the image
 def remove_noise(image, kernel_size):
@@ -81,26 +85,33 @@ def apply_morphology(binary_image, kernel_size):
     morphed = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel)
     return morphed
 
-# Function to filter OCR results based on recent history
-def filter_ocr_results(detected_text):
-    recent_ocr_results.append(detected_text)
-    most_common = max(set(recent_ocr_results), key=recent_ocr_results.count)
-    return most_common  # Return the most common result from recent frames
-
 # Function to send OCR result to server via TCP/IP
 def send_ocr_result(result):
     server_ip = "192.168.0.5"  # Replace with actual server IP
     server_port = 12345  # Replace with the actual port
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(5)
+            s.settimeout(5)  # Set a 5-second timeout for the socket connection
             s.connect((server_ip, server_port))
             s.sendall(result.encode())
             print(f"Sent OCR result to server: {result}")
     except (socket.timeout, socket.error) as e:
         print(f"Error: Could not send OCR result to server. {e}")
 
-def process_image(image):
+# Function to calculate similarity between two strings (Levenshtein-based)
+def is_similar(text1, text2, threshold=0.7):
+    return SequenceMatcher(None, text1, text2).ratio() > threshold
+
+# Function to smooth OCR results by comparing consecutive readings
+def smooth_ocr_result(current_text, previous_text, similarity_threshold=0.7):
+    if previous_text is None or is_similar(current_text, previous_text, similarity_threshold):
+        return current_text
+    else:
+        return previous_text
+
+# Function to process each frame and extract the text via OCR
+def process_image(image, previous_text=None):
+    # Initialize detected_text to an empty string in case OCR is not enabled
     detected_text = ""
 
     # Get current positions of trackbars
@@ -125,38 +136,70 @@ def process_image(image):
     # Convert the cropped frame to grayscale
     gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
 
-    # Apply CLAHE for contrast enhancement
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    equalized = clahe.apply(gray)
+    # Apply CLAHE to enhance the contrast
+    clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(2, 2))  # Set CLAHE parameters
+    equalized = clahe.apply(gray)  # Apply CLAHE to the grayscale image
 
     # Remove noise from the equalized image
     denoised = remove_noise(equalized, blur_kernel_size)
 
-    # Apply adaptive thresholding
+    # Apply adaptive thresholding to preprocess the image
     threshold_method = cv2.THRESH_BINARY if threshold_type == 0 else cv2.THRESH_BINARY_INV
     thresh = cv2.adaptiveThreshold(denoised, 255, cv2.ADAPTIVE_THRESH_MEAN_C, threshold_method, block_size, c)
 
-    # Apply morphological operations
+    # Apply morphological operations to the binary image
     morphed = apply_morphology(thresh, morph_kernel_size)
 
-    # Perform OCR
+    # Draw crop area on the original frame (instead of the cropped image) for real-time reference
+    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 1)  # Green rectangle for the crop region
+
+    # If OCR is enabled, perform OCR and draw bounding boxes on threshold image
     if OCR:
+        # Perform OCR on the processed cropped frame
         custom_config = r'--oem 3 --psm 6'
         ocr_result = pytesseract.image_to_string(morphed, config=custom_config)
+
+        # Remove any extra characters or spaces
         detected_text = ''.join(filter(str.isalnum, ocr_result))
 
-        # Apply text consistency filtering
-        stable_text = filter_ocr_results(detected_text)
+        # Get bounding box information for each detected character
+        boxes = pytesseract.image_to_boxes(morphed, config=custom_config)
 
-        # Display the most stable detected text
-        cv2.putText(image, f"Detected: {stable_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 1, cv2.LINE_AA)
+        # Draw bounding boxes on the threshold image BEFORE resizing
+        h, w = morphed.shape  # height and width of the thresholded image
+        threshold_bgr = cv2.cvtColor(morphed, cv2.COLOR_GRAY2BGR)  # Convert thresholded image to BGR to draw colored boxes
 
-    # Display the processed image (with text and thresholded image)
-    cv2.imshow('OCR Real-time Threshold Video', image)
+        for box in boxes.splitlines():
+            box = box.split()
+            x, y, x2, y2 = int(box[1]), int(box[2]), int(box[3]), int(box[4])
+            y = h - y  # Flip the y coordinate for OpenCV's format
+            y2 = h - y2
+            cv2.rectangle(threshold_bgr, (x, y2), (x2, y), (0, 255, 0), 1)  # Draw green boxes around detected characters
 
-    return stable_text
+        # Smooth the detected text with previous text for consistency
+        detected_text = smooth_ocr_result(detected_text, previous_text)
+
+        # Compare the detected text with the target string
+        match_result = "OK" if detected_text == target_string else "Not match"
+
+        # Display the detected text and the result on the left side (original_with_rect)
+        cv2.putText(image, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 1, cv2.LINE_AA)
+        cv2.putText(image, f"Result: {match_result}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 1, cv2.LINE_AA)
+
+    # Resize the thresholded image with bounding boxes to match the original image's size for side-by-side display
+    resized_thresh = cv2.resize(threshold_bgr, (image.shape[1], image.shape[0]))
+
+    # Combine the original image and the thresholded image side by side
+    original_with_rect = image.copy()  # Copy the original image to add the rectangle without modifying it
+    combined = np.hstack((original_with_rect, resized_thresh))  # Combine images side by side
+
+    # Display the combined original and thresholded images side by side
+    cv2.imshow('OCR Real-time Threshold Video', combined)
+
+    return detected_text
 
 def main():
+    previous_text = None  # Track the previous text for smoothing
     try:
         if real_time_mode:
             while True:
@@ -164,13 +207,15 @@ def main():
                 if not ret:
                     break
 
-                stable_text = process_image(frame)
+                # Process the frame and smooth OCR result
+                detected_text = process_image(frame, previous_text)
+                previous_text = detected_text  # Update the previous text for the next frame
 
                 # Capture result when 'c' is pressed
                 if cv2.waitKey(1) & 0xFF == ord('c'):
-                    print(f"OCR Capture: {stable_text}")
-                    if stable_text:
-                        send_ocr_result(stable_text)
+                    print(f"OCR Capture: {detected_text}")
+                    if detected_text:
+                        send_ocr_result(detected_text)
 
                 # Break the loop on 'q' key press
                 if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -179,23 +224,26 @@ def main():
             if os.path.exists(image_path):
                 image = cv2.imread(image_path)
                 while True:
-                    stable_text = process_image(image)
+                    detected_text = process_image(image, previous_text)
+                    previous_text = detected_text  # Update the previous text for smoothing
 
                     # Capture result when 'c' is pressed
                     if cv2.waitKey(1) & 0xFF == ord('c'):
-                        print(f"OCR Capture: {stable_text}")
-                        if stable_text:
-                            send_ocr_result(stable_text)
+                        print(f"OCR Capture: {detected_text}")
+                        if detected_text:
+                            send_ocr_result(detected_text)
 
                     # Break the loop on 'q' key press
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
 
+                # After the loop exits, ensure final parameters are saved
                 save_parameters()
             else:
                 print("Image file not found.")
 
     finally:
+        # Release resources even if an error occurs
         if real_time_mode and cap.isOpened():
             cap.release()
         cv2.destroyAllWindows()
