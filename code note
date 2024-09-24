@@ -97,6 +97,21 @@ def send_ocr_result(result):
     except (socket.timeout, socket.error) as e:
         print(f"Error: Could not send OCR result to server. {e}")
 
+# Function to average multiple frames to reduce flickering
+def average_frames(cap, num_frames=5):
+    frames = []
+    for _ in range(num_frames):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frames.append(frame)
+
+    if len(frames) > 0:
+        avg_frame = np.mean(frames, axis=0).astype(np.uint8)
+        return avg_frame
+    else:
+        return None
+
 def process_image(image):
     # Initialize detected_text to an empty string in case OCR is not enabled
     detected_text = ""
@@ -183,8 +198,9 @@ def main():
     try:
         if real_time_mode:
             while True:
-                ret, frame = cap.read()
-                if not ret:
+                # Capture and average multiple frames to reduce flicker
+                frame = average_frames(cap, num_frames=5)
+                if frame is None:
                     break
 
                 detected_text = process_image(frame)
