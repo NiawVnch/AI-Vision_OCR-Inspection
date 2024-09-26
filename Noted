@@ -1,30 +1,13 @@
-v4l2-ctl --device=/dev/video0 --list-formats-ext
-
-v4l2-ctl --list-devices
-
-# Set the resolution
-width = 1280  # Desired width
-height = 720  # Desired height
-cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-
-# Set the frame rate
-fps = 30  # Desired frame rate (fps)
-cap.set(cv2.CAP_PROP_FPS, fps)
-
-# Verify settings
-actual_width = cap.get(cv2.CAP_PROP_FRAME_WIDTH)
-actual_height = cap.get(cv2.CAP_PROP_FRAME_HEIGHT)
-actual_fps = cap.get(cv2.CAP_PROP_FPS)
-
---------------------------------------------------------------------------
-
 import cv2
 import pytesseract
 import csv
 import os
+import re
 import numpy as np
 import socket
+from collections import deque
+import threading
+import time
 
 # Set the mode
 real_time_mode = True
@@ -41,11 +24,41 @@ if real_time_mode:
     cap = cv2.VideoCapture(5)
 
     # Set the frame rate
-    fps = 30  # Desired frame rate (fps)
+    fps = 25  # Desired frame rate (fps)
     cap.set(cv2.CAP_PROP_FPS, fps)
 
-# Define the target string
-target_string = "0123456789AB"
+# Define the target string and expected pattern (A followed by digits)
+expected_pattern = r'A\d{10}'  # Matches 'A' followed by exactly 10 digits
+detected_text_history = deque(maxlen=10)  # Keep track of previous OCR results
+
+# TCP/IP server settings for PLC trigger
+PLC_IP = "0.0.0.0"  # The server IP address (0.0.0.0 listens to all interfaces)
+PLC_PORT = 5000      # The port to listen to PLC signals
+plc_trigger_received = False  # Flag for when PLC sends a trigger
+
+# OCR thread-related variables
+ocr_thread_running = False
+ocr_result = ""
+ocr_frame_queue = deque(maxlen=1)  # Queue to store the latest frame for OCR
+ocr_thread_lock = threading.Lock()
+
+# Function to start the TCP/IP server and listen for PLC trigger
+def plc_server():
+    global plc_trigger_received
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
+        server_socket.bind((PLC_IP, PLC_PORT))
+        server_socket.listen(1)
+        print(f"Listening for PLC trigger on {PLC_IP}:{PLC_PORT}...")
+
+        while True:
+            conn, addr = server_socket.accept()
+            with conn:
+                print(f"Connection from {addr}")
+                data = conn.recv(1024)
+                if data:
+                    print("PLC trigger received!")
+                    plc_trigger_received = True
+                    conn.sendall(b'Trigger received')  # Send acknowledgment
 
 # Function to save parameters to a CSV file
 def save_parameters():
@@ -118,8 +131,25 @@ def send_ocr_result(result):
     except (socket.timeout, socket.error) as e:
         print(f"Error: Could not send OCR result to server. {e}")
 
-def process_image(image):
-    # Initialize detected_text to an empty string in case OCR is not enabled
+# Function to calculate average OCR result (stabilize readings)
+def get_stabilized_text(history):
+    text_counts = {}
+    for text in history:
+        text_counts[text] = text_counts.get(text, 0) + 1
+    return max(text_counts, key=text_counts.get)  # Return the most frequent text
+
+# OCR processing function that runs in a separate thread
+def ocr_processing():
+    global ocr_result
+    while ocr_thread_running:
+        if len(ocr_frame_queue) > 0:
+            with ocr_thread_lock:
+                frame = ocr_frame_queue.pop()  # Get the most recent frame
+            ocr_result = process_image_for_ocr(frame)  # Perform OCR on the frame
+        time.sleep(0.1)  # Small sleep to avoid CPU hogging
+
+# Function to process the image and extract OCR results (this is done in the OCR thread)
+def process_image_for_ocr(image):
     detected_text = ""
 
     # Get current positions of trackbars
@@ -144,63 +174,45 @@ def process_image(image):
     # Convert the cropped frame to grayscale
     gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
 
-    # Remove noise from the grayscale image
-    denoised = remove_noise(gray, blur_kernel_size)
+    # Apply CLAHE to enhance the contrast
+    clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(2, 2))  # Set CLAHE parameters
+    equalized = clahe.apply(gray)  # Apply CLAHE to the grayscale image
+
+    # Remove noise from the equalized image
+    denoised = remove_noise(equalized, blur_kernel_size)
 
     # Apply adaptive thresholding to preprocess the image
     threshold_method = cv2.THRESH_BINARY if threshold_type == 0 else cv2.THRESH_BINARY_INV
-    thresh = cv2.adaptiveThreshold(denoised, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, threshold_method, block_size, c)
+    thresh = cv2.adaptiveThreshold(denoised, 255, cv2.ADAPTIVE_THRESH_MEAN_C, threshold_method, block_size, c)
 
     # Apply morphological operations to the binary image
     morphed = apply_morphology(thresh, morph_kernel_size)
 
-    # Draw crop area on the original frame (instead of the cropped image) for real-time reference
-    cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)  # Green rectangle for the crop region
+    # Perform OCR with a whitelist for digits and specific uppercase letters
+    custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    ocr_result = pytesseract.image_to_string(morphed, config=custom_config)
 
-    # If OCR is enabled, perform OCR and draw bounding boxes on threshold image
-    if OCR:
-        # Perform OCR on the processed cropped frame
-        custom_config = r'--oem 3 --psm 6'
-        ocr_result = pytesseract.image_to_string(morphed, config=custom_config)
-
-        # Remove any extra characters or spaces
-        detected_text = ''.join(filter(str.isalnum, ocr_result))
-
-        # Get bounding box information for each detected character
-        boxes = pytesseract.image_to_boxes(morphed, config=custom_config)
-
-        # Draw bounding boxes on the threshold image BEFORE resizing
-        h, w = morphed.shape  # height and width of the thresholded image
-        threshold_bgr = cv2.cvtColor(morphed, cv2.COLOR_GRAY2BGR)  # Convert thresholded image to BGR to draw colored boxes
-
-        for box in boxes.splitlines():
-            box = box.split()
-            x, y, x2, y2 = int(box[1]), int(box[2]), int(box[3]), int(box[4])
-            y = h - y  # Flip the y coordinate for OpenCV's format
-            y2 = h - y2
-            cv2.rectangle(threshold_bgr, (x, y2), (x2, y), (0, 255, 0), 2)  # Draw green boxes around detected characters
-
-        # Compare the detected text with the target string
-        match_result = "OK" if detected_text == target_string else "Not match"
-
-        # Display the detected text and the result on the left side (original_with_rect)
-        cv2.putText(image, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
-        cv2.putText(image, f"Result: {match_result}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
-
-    # Resize the thresholded image with bounding boxes to match the original image's size for side-by-side display
-    resized_thresh = cv2.resize(threshold_bgr, (image.shape[1], image.shape[0]))
-
-    # Combine the original image and the thresholded image side by side
-    original_with_rect = image.copy()  # Copy the original image to add the rectangle without modifying it
-    combined = np.hstack((original_with_rect, resized_thresh))  # Combine images side by side
-
-    # Display the combined original and thresholded images side by side
-    cv2.imshow('OCR Real-time Threshold Video', combined)
+    # Remove any extra characters or spaces
+    detected_text = ''.join(filter(str.isalnum, ocr_result))
 
     return detected_text
 
 def main():
+    global plc_trigger_received, ocr_thread_running
     detected_text = ""
+
+    # Start PLC trigger listener in a separate thread
+    plc_thread = threading.Thread(target=plc_server, daemon=True)
+    plc_thread.start()
+
+    # Start OCR processing thread
+    ocr_thread_running = True
+    ocr_thread = threading.Thread(target=ocr_processing, daemon=True)
+    ocr_thread.start()
+
+    frame_counter = 0  # To track frames and process OCR every Nth frame
+    process_every_n_frames = 10  # Adjust this to control OCR frequency (e.g., OCR every 10 frames)
+
     try:
         if real_time_mode:
             while True:
@@ -208,17 +220,32 @@ def main():
                 if not ret:
                     break
 
-                detected_text = process_image(frame)
+                # Real-time display of the frame (without OCR)
+                cv2.imshow('OCR Real-time Threshold Video', frame)
+
+                # Perform OCR on every Nth frame
+                frame_counter += 1
+                if frame_counter % process_every_n_frames == 0:
+                    with ocr_thread_lock:
+                        ocr_frame_queue.append(frame.copy())  # Add the frame to the OCR queue
 
                 # Capture result when 'c' is pressed
                 if cv2.waitKey(1) & 0xFF == ord('c'):
-                    print(f"OCR Capture: {detected_text}")
-                    if detected_text:
-                        send_ocr_result(detected_text)
+                    print(f"OCR Capture: {ocr_result}")
+                    if ocr_result:
+                        send_ocr_result(ocr_result)
+
+                # Trigger from PLC signal
+                if plc_trigger_received:
+                    print(f"PLC-triggered OCR Capture: {ocr_result}")
+                    if ocr_result:
+                        send_ocr_result(ocr_result)
+                    plc_trigger_received = False  # Reset the PLC trigger flag
 
                 # Break the loop on 'q' key press
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
+
         else:
             if os.path.exists(image_path):
                 image = cv2.imread(image_path)
@@ -241,6 +268,10 @@ def main():
                 print("Image file not found.")
 
     finally:
+        # Stop the OCR thread
+        ocr_thread_running = False
+        ocr_thread.join()
+
         # Release resources even if an error occurs
         if real_time_mode and cap.isOpened():
             cap.release()
@@ -248,4 +279,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
