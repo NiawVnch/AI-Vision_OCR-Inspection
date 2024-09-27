@@ -11,25 +11,21 @@ import queue
 
 # Set the mode
 real_time_mode = True
-# real_time_mode = False
 
 # Specify the path to the image file
 image_path = "GrayCO2.JPEG"
 
 OCR = True
-# OCR = False
 
 # Initialize the camera (only used in real-time mode)
 if real_time_mode:
     cap = cv2.VideoCapture(5)
-
-    # Set the frame rate
     fps = 25  # Desired frame rate (fps)
     cap.set(cv2.CAP_PROP_FPS, fps)
 
-# Define the target string and expected pattern (A followed by digits)
-expected_pattern = r'A\d{10}'  # Matches 'A' followed by exactly 10 digits
-detected_text_history = deque(maxlen=10)  # Keep track of previous OCR results
+# Define the expected OCR pattern
+expected_pattern = r'A\d{10}'
+detected_text_history = deque(maxlen=10)
 
 # TCP/IP server settings for PLC trigger
 PLC_IP = "0.0.0.0"  # The server IP address (0.0.0.0 listens to all interfaces)
@@ -37,17 +33,16 @@ PLC_PORT = 5000      # The port to listen to PLC signals
 plc_trigger_received = False  # Flag for when PLC sends a trigger
 
 # Queues for handling frames and processed results asynchronously
-frame_queue = queue.Queue(maxsize=5)  # For unprocessed frames
-processed_frame_queue = queue.Queue(maxsize=5)  # For processed frames
+frame_queue = queue.Queue(maxsize=5)
+processed_frame_queue = queue.Queue(maxsize=5)
 
-# Function to start the TCP/IP server and listen for PLC trigger
+# PLC server function to receive triggers
 def plc_server():
     global plc_trigger_received
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
         server_socket.bind((PLC_IP, PLC_PORT))
         server_socket.listen(1)
         print(f"Listening for PLC trigger on {PLC_IP}:{PLC_PORT}...")
-
         while True:
             conn, addr = server_socket.accept()
             with conn:
@@ -56,115 +51,97 @@ def plc_server():
                 if data:
                     print("PLC trigger received!")
                     plc_trigger_received = True
-                    conn.sendall(b'Trigger received')  # Send acknowledgment
+                    conn.sendall(b'Trigger received')
 
-# Function to save parameters to a CSV file
+# Function to save trackbar parameters
 def save_parameters():
-    # Get current positions of trackbars
     block_size = cv2.getTrackbarPos('Block Size', 'OCR Combined Video')
     c = cv2.getTrackbarPos('C', 'OCR Combined Video')
     blur_kernel_size = cv2.getTrackbarPos('Blur Kernel Size', 'OCR Combined Video')
     morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Combined Video')
     threshold_type = cv2.getTrackbarPos('Threshold Type', 'OCR Combined Video')
 
-    # Save the parameters to a CSV file
     with open('parameters.csv', mode='w', newline='') as file:
         writer = csv.writer(file)
         writer.writerow(['Crop Coordinate', 'Block Size', 'C', 'Blur Kernel Size', 'Morph Kernel Size', 'Threshold Type'])
         writer.writerow([str(crop_coords), block_size, c, blur_kernel_size, morph_kernel_size, threshold_type])
 
-# Function to load parameters from a CSV file
+# Load parameters from CSV
 def load_parameters():
     if os.path.exists('parameters.csv'):
         with open('parameters.csv', mode='r') as file:
             reader = csv.reader(file)
-            next(reader)  # Skip header
+            next(reader)
             params = next(reader)
-            crop_coords = eval(params[0])  # Evaluate the string as a tuple
-            print(f"Loaded parameters: {params}")  # Debugging statement
+            crop_coords = eval(params[0])
             return crop_coords, int(params[1]), int(params[2]), int(params[3]), int(params[4]), int(params[5])
-    print("Loading default parameters...")  # Debugging statement
-    return (100, 100, 200, 200), 11, 2, 5, 3, 0  # Default values
+    return (100, 100, 200, 200), 11, 2, 5, 3, 0
 
-# Load parameters before creating trackbars
+# Load parameters
 crop_coords, block_size, c, blur_kernel_size, morph_kernel_size, threshold_type = load_parameters()
 
-# Callback function to update and save parameters when a trackbar is adjusted
+# Update and save function for trackbars
 def update_and_save(val):
-    save_parameters()  # Save parameters when a trackbar is updated
+    save_parameters()
 
-# Create a window
+# Create window and trackbars
 cv2.namedWindow('OCR Combined Video')
-
-# Create trackbars for block size, constant, and GaussianBlur and morphology kernel sizes
 cv2.createTrackbar('Block Size', 'OCR Combined Video', block_size, 255, update_and_save)
 cv2.createTrackbar('C', 'OCR Combined Video', c, 100, update_and_save)
 cv2.createTrackbar('Blur Kernel Size', 'OCR Combined Video', blur_kernel_size, 50, update_and_save)
 cv2.createTrackbar('Morph Kernel Size', 'OCR Combined Video', morph_kernel_size, 50, update_and_save)
-cv2.createTrackbar('Threshold Type', 'OCR Combined Video', threshold_type, 1, update_and_save)  # 0 for THRESH_BINARY, 1 for THRESH_BINARY_INV
+cv2.createTrackbar('Threshold Type', 'OCR Combined Video', threshold_type, 1, update_and_save)
 
-# Function to remove noise from the image
+# Noise removal
 def remove_noise(image, kernel_size):
     if kernel_size % 2 == 0:
         kernel_size += 1
-    blurred = cv2.GaussianBlur(image, (kernel_size, kernel_size), 0)
-    return blurred
+    return cv2.GaussianBlur(image, (kernel_size, kernel_size), 0)
 
-# Function to apply morphological operations to the binary image
+# Apply morphology
 def apply_morphology(binary_image, kernel_size):
     if kernel_size < 1:
-        kernel_size = 1  # Ensure kernel_size is at least 1
+        kernel_size = 1
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
-    morphed = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel)
-    return morphed
+    return cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel)
 
-# Function to send OCR result to server via TCP/IP
+# Function to send OCR result to server
 def send_ocr_result(result):
-    server_ip = "192.168.0.5"  # Replace with actual server IP
-    server_port = 12345  # Replace with the actual port
+    server_ip = "192.168.0.5"
+    server_port = 12345
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(5)  # Set a 5-second timeout for the socket connection
+            s.settimeout(5)
             s.connect((server_ip, server_port))
             s.sendall(result.encode())
             print(f"Sent OCR result to server: {result}")
     except (socket.timeout, socket.error) as e:
         print(f"Error: Could not send OCR result to server. {e}")
 
-# Function to calculate average OCR result (stabilize readings)
+# Get the most frequent OCR result
 def get_stabilized_text(history):
-    if not history:  # Ensure there is history before processing
-        return ""  # Return empty string if history is empty
+    if not history:
+        return ""
     text_counts = {}
     for text in history:
         text_counts[text] = text_counts.get(text, 0) + 1
-    return max(text_counts, key=text_counts.get)  # Return the most frequent text
+    return max(text_counts, key=text_counts.get)
 
-# Function to process image and extract OCR results (called in a separate thread)
+# OCR processing in a separate thread
 def process_ocr():
     global detected_text_history
     while True:
-        # Wait for a frame from the queue
         frame = frame_queue.get()
-
-        # Process the frame (this is the same process_image function)
         detected_text = ""
 
-        # Crop the image using loaded coordinates
+        # Process frame for OCR
         x1, y1, x2, y2 = crop_coords
         cropped = frame[y1:y2, x1:x2]
-
-        # Convert the cropped frame to grayscale
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
-
-        # Apply CLAHE to enhance the contrast
         clahe = cv2.createCLAHE(clipLimit=1.0, tileGridSize=(2, 2))
         equalized = clahe.apply(gray)
-
-        # Remove noise from the equalized image
         denoised = remove_noise(equalized, cv2.getTrackbarPos('Blur Kernel Size', 'OCR Combined Video'))
 
-        # Apply adaptive thresholding to preprocess the image
         threshold_method = cv2.THRESH_BINARY if cv2.getTrackbarPos('Threshold Type', 'OCR Combined Video') == 0 else cv2.THRESH_BINARY_INV
         block_size = cv2.getTrackbarPos('Block Size', 'OCR Combined Video')
         c = cv2.getTrackbarPos('C', 'OCR Combined Video')
@@ -175,56 +152,44 @@ def process_ocr():
             block_size = 3
 
         thresh = cv2.adaptiveThreshold(denoised, 255, cv2.ADAPTIVE_THRESH_MEAN_C, threshold_method, block_size, c)
-
-        # Apply morphological operations
         morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Combined Video')
         morphed = apply_morphology(thresh, morph_kernel_size)
 
-        # Perform OCR with a whitelist for digits and uppercase letters
+        # Perform OCR
         custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
         ocr_result = pytesseract.image_to_string(morphed, config=custom_config)
-
-        # Clean up OCR result
         detected_text = ''.join(filter(str.isalnum, ocr_result))
-
-        # Add OCR result to history
         detected_text_history.append(detected_text)
 
-        # Draw bounding boxes on the threshold image BEFORE resizing
+        # Draw bounding boxes
         h, w = morphed.shape
         threshold_bgr = cv2.cvtColor(morphed, cv2.COLOR_GRAY2BGR)
         boxes = pytesseract.image_to_boxes(morphed, config=custom_config)
         for box in boxes.splitlines():
             box = box.split()
             x, y, x2, y2 = int(box[1]), int(box[2]), int(box[3]), int(box[4])
-            y = h - y  # Flip the y coordinate for OpenCV's format
+            y = h - y
             y2 = h - y2
-            cv2.rectangle(threshold_bgr, (x, y2), (x2, y), (0, 255, 0), 2)  # Draw bounding boxes in green
+            cv2.rectangle(threshold_bgr, (x, y2), (x2, y), (0, 255, 0), 2)
 
-        # Resize the thresholded image for display
-        resized_thresh = cv2.resize(threshold_bgr, (frame.shape[1], frame.shape[0]))  # Resize to match original
-
-        # Combine original and processed frames side by side
+        resized_thresh = cv2.resize(threshold_bgr, (frame.shape[1], frame.shape[0]))
         combined = np.hstack((frame, resized_thresh))
 
-        # Put the combined frame in the processed_frame_queue
         if not processed_frame_queue.full():
             processed_frame_queue.put(combined)
 
-# Main function to handle real-time video capture and display
+# Main function to handle video and display
 def main():
     global plc_trigger_received
-    stable_text = ""  # Initialize stable_text
+    stable_text = ""
 
-    # Start PLC trigger listener in a separate thread
+    # Start PLC and OCR processing threads
     plc_thread = threading.Thread(target=plc_server, daemon=True)
     plc_thread.start()
-
-    # Start the OCR processing thread
     ocr_thread = threading.Thread(target=process_ocr, daemon=True)
     ocr_thread.start()
 
-    last_processed_frame = None  # Variable to hold the last processed frame
+    last_processed_frame = None
 
     try:
         if real_time_mode:
@@ -233,51 +198,41 @@ def main():
                 if not ret:
                     break
 
-                # Draw the crop rectangle on the original frame
+                # Draw crop rectangle
                 x1, y1, x2, y2 = crop_coords
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)  # Green rectangle for the crop region
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)
 
-                # Add the frame to the queue for OCR processing
                 if not frame_queue.full():
                     frame_queue.put(frame)
 
-                # Check if there's a processed frame to display
                 if not processed_frame_queue.empty():
-                    last_processed_frame = processed_frame_queue.get()  # Update the last processed frame
+                    last_processed_frame = processed_frame_queue.get()
 
                 if last_processed_frame is not None:
-                    # Combine the original frame with the last processed frame
                     combined = np.hstack((frame, last_processed_frame[:, frame.shape[1]:]))
                 else:
-                    # If no processed frame is available yet, show the original frame with blank space on the right
                     blank_image = np.zeros_like(frame)
                     combined = np.hstack((frame, blank_image))
 
-                # Get the most stable OCR result from history
                 if len(detected_text_history) > 0:
                     stable_text = get_stabilized_text(detected_text_history)
 
-                # Display detected text on the original frame (left side)
                 cv2.putText(frame, f"Detected: {stable_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                 cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, stable_text) else 'Not match'}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                # Display the combined frame
                 cv2.imshow('OCR Combined Video', combined)
 
-                # Capture result when 'c' is pressed
                 if cv2.waitKey(1) & 0xFF == ord('c'):
                     print(f"OCR Capture: {stable_text}")
                     if stable_text:
                         send_ocr_result(stable_text)
 
-                # Trigger from PLC signal
                 if plc_trigger_received:
                     print(f"PLC-triggered OCR Capture: {stable_text}")
                     if stable_text:
                         send_ocr_result(stable_text)
-                    plc_trigger_received = False  # Reset the PLC trigger flag
+                    plc_trigger_received = False
 
-                # Break the loop on 'q' key press
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
         else:
@@ -285,50 +240,39 @@ def main():
                 image = cv2.imread(image_path)
                 last_processed_frame = None
                 while True:
-                    # Add the image to the queue for OCR processing
                     if not frame_queue.full():
                         frame_queue.put(image)
 
-                    # Check if there's a processed frame to display
                     if not processed_frame_queue.empty():
                         last_processed_frame = processed_frame_queue.get()
 
                     if last_processed_frame is not None:
-                        # Combine the original image with the last processed frame
                         combined = np.hstack((image, last_processed_frame[:, image.shape[1]:]))
                     else:
-                        # If no processed frame is available yet, show the original frame with blank space on the right
                         blank_image = np.zeros_like(image)
                         combined = np.hstack((image, blank_image))
 
-                    # Get the most stable OCR result from history
                     if len(detected_text_history) > 0:
                         stable_text = get_stabilized_text(detected_text_history)
 
-                    # Display detected text on the original frame (left side)
                     cv2.putText(image, f"Detected: {stable_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                     cv2.putText(image, f"Match: {'OK' if re.match(expected_pattern, stable_text) else 'Not match'}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
-                    # Display the combined frame
                     cv2.imshow('OCR Combined Video', combined)
 
-                    # Capture result when 'c' is pressed
                     if cv2.waitKey(1) & 0xFF == ord('c'):
                         print(f"OCR Capture: {stable_text}")
                         if stable_text:
                             send_ocr_result(stable_text)
 
-                    # Break the loop on 'q' key press
                     if cv2.waitKey(1) & 0xFF == ord('q'):
                         break
 
-                # After the loop exits, ensure final parameters are saved
                 save_parameters()
             else:
                 print("Image file not found.")
 
     finally:
-        # Release resources even if an error occurs
         if real_time_mode and cap.isOpened():
             cap.release()
         cv2.destroyAllWindows()
