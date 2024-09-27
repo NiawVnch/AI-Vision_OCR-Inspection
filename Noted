@@ -61,11 +61,11 @@ def plc_server():
 # Function to save parameters to a CSV file
 def save_parameters():
     # Get current positions of trackbars
-    block_size = cv2.getTrackbarPos('Block Size', 'OCR Real-time Threshold Video')
-    c = cv2.getTrackbarPos('C', 'OCR Real-time Threshold Video')
-    blur_kernel_size = cv2.getTrackbarPos('Blur Kernel Size', 'OCR Real-time Threshold Video')
-    morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Real-time Threshold Video')
-    threshold_type = cv2.getTrackbarPos('Threshold Type', 'OCR Real-time Threshold Video')
+    block_size = cv2.getTrackbarPos('Block Size', 'OCR Combined Video')
+    c = cv2.getTrackbarPos('C', 'OCR Combined Video')
+    blur_kernel_size = cv2.getTrackbarPos('Blur Kernel Size', 'OCR Combined Video')
+    morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Combined Video')
+    threshold_type = cv2.getTrackbarPos('Threshold Type', 'OCR Combined Video')
 
     # Save the parameters to a CSV file
     with open('parameters.csv', mode='w', newline='') as file:
@@ -94,14 +94,14 @@ def update_and_save(val):
     save_parameters()  # Save parameters when a trackbar is updated
 
 # Create a window
-cv2.namedWindow('OCR Real-time Threshold Video')
+cv2.namedWindow('OCR Combined Video')
 
 # Create trackbars for block size, constant, and GaussianBlur and morphology kernel sizes
-cv2.createTrackbar('Block Size', 'OCR Real-time Threshold Video', block_size, 255, update_and_save)
-cv2.createTrackbar('C', 'OCR Real-time Threshold Video', c, 100, update_and_save)
-cv2.createTrackbar('Blur Kernel Size', 'OCR Real-time Threshold Video', blur_kernel_size, 50, update_and_save)
-cv2.createTrackbar('Morph Kernel Size', 'OCR Real-time Threshold Video', morph_kernel_size, 50, update_and_save)
-cv2.createTrackbar('Threshold Type', 'OCR Real-time Threshold Video', threshold_type, 1, update_and_save)  # 0 for THRESH_BINARY, 1 for THRESH_BINARY_INV
+cv2.createTrackbar('Block Size', 'OCR Combined Video', block_size, 255, update_and_save)
+cv2.createTrackbar('C', 'OCR Combined Video', c, 100, update_and_save)
+cv2.createTrackbar('Blur Kernel Size', 'OCR Combined Video', blur_kernel_size, 50, update_and_save)
+cv2.createTrackbar('Morph Kernel Size', 'OCR Combined Video', morph_kernel_size, 50, update_and_save)
+cv2.createTrackbar('Threshold Type', 'OCR Combined Video', threshold_type, 1, update_and_save)  # 0 for THRESH_BINARY, 1 for THRESH_BINARY_INV
 
 # Function to remove noise from the image
 def remove_noise(image, kernel_size):
@@ -162,12 +162,12 @@ def process_ocr():
         equalized = clahe.apply(gray)
 
         # Remove noise from the equalized image
-        denoised = remove_noise(equalized, cv2.getTrackbarPos('Blur Kernel Size', 'OCR Real-time Threshold Video'))
+        denoised = remove_noise(equalized, cv2.getTrackbarPos('Blur Kernel Size', 'OCR Combined Video'))
 
         # Apply adaptive thresholding to preprocess the image
-        threshold_method = cv2.THRESH_BINARY if cv2.getTrackbarPos('Threshold Type', 'OCR Real-time Threshold Video') == 0 else cv2.THRESH_BINARY_INV
-        block_size = cv2.getTrackbarPos('Block Size', 'OCR Real-time Threshold Video')
-        c = cv2.getTrackbarPos('C', 'OCR Real-time Threshold Video')
+        threshold_method = cv2.THRESH_BINARY if cv2.getTrackbarPos('Threshold Type', 'OCR Combined Video') == 0 else cv2.THRESH_BINARY_INV
+        block_size = cv2.getTrackbarPos('Block Size', 'OCR Combined Video')
+        c = cv2.getTrackbarPos('C', 'OCR Combined Video')
 
         if block_size % 2 == 0:
             block_size += 1
@@ -177,7 +177,7 @@ def process_ocr():
         thresh = cv2.adaptiveThreshold(denoised, 255, cv2.ADAPTIVE_THRESH_MEAN_C, threshold_method, block_size, c)
 
         # Apply morphological operations
-        morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Real-time Threshold Video')
+        morph_kernel_size = cv2.getTrackbarPos('Morph Kernel Size', 'OCR Combined Video')
         morphed = apply_morphology(thresh, morph_kernel_size)
 
         # Perform OCR with a whitelist for digits and uppercase letters
@@ -222,9 +222,6 @@ def main():
                 x1, y1, x2, y2 = crop_coords
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)  # Green rectangle for the crop region
 
-                # Display the original frame immediately
-                cv2.imshow('OCR Real-time Threshold Video', frame)
-
                 # Add the frame to the queue for OCR processing
                 if not frame_queue.full():
                     frame_queue.put(frame)
@@ -232,7 +229,12 @@ def main():
                 # Check if there's a processed frame to display
                 if not processed_frame_queue.empty():
                     processed_frame = processed_frame_queue.get()
-                    cv2.imshow('OCR Processed Threshold Video', processed_frame)
+                    cv2.imshow('OCR Combined Video', processed_frame)
+                else:
+                    # If no processed frame is ready, show the original frame on the left and blank space on the right
+                    blank_image = np.zeros_like(frame)
+                    combined = np.hstack((frame, blank_image))
+                    cv2.imshow('OCR Combined Video', combined)
 
                 # Get the most stable OCR result from history
                 stable_text = get_stabilized_text(detected_text_history)
@@ -264,7 +266,12 @@ def main():
                     # Check if there's a processed frame to display
                     if not processed_frame_queue.empty():
                         processed_frame = processed_frame_queue.get()
-                        cv2.imshow('OCR Processed Threshold Video', processed_frame)
+                        cv2.imshow('OCR Combined Video', processed_frame)
+                    else:
+                        # If no processed frame is ready, show the original frame on the left and blank space on the right
+                        blank_image = np.zeros_like(image)
+                        combined = np.hstack((image, blank_image))
+                        cv2.imshow('OCR Combined Video', combined)
 
                     # Get the most stable OCR result from history
                     stable_text = get_stabilized_text(detected_text_history)
