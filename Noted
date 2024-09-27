@@ -8,6 +8,7 @@ import socket
 from collections import deque
 import threading
 import queue
+import time
 
 # Set the mode
 real_time_mode = True
@@ -40,22 +41,28 @@ processed_frame_queue = queue.Queue(maxsize=5)
 detected_text_lock = threading.Lock()
 detected_text = ""  # Initialize globally for real-time detection
 
-# Function to handle PLC trigger
+# Function to handle PLC trigger (with non-blocking behavior)
 def plc_server():
     global plc_trigger_received
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
         server_socket.bind((PLC_IP, PLC_PORT))
         server_socket.listen(1)
+        server_socket.settimeout(1)  # Non-blocking, 1 second timeout
         print(f"Listening for PLC trigger on {PLC_IP}:{PLC_PORT}...")
+
         while True:
-            conn, addr = server_socket.accept()
-            with conn:
-                print(f"Connection from {addr}")
-                data = conn.recv(1024)
-                if data:
-                    print("PLC trigger received!")
-                    plc_trigger_received = True
-                    conn.sendall(b'Trigger received')
+            try:
+                conn, addr = server_socket.accept()
+                with conn:
+                    print(f"Connection from {addr}")
+                    data = conn.recv(1024)
+                    if data:
+                        print("PLC trigger received!")
+                        plc_trigger_received = True
+                        conn.sendall(b'Trigger received')
+            except socket.timeout:
+                # Timeout occurs if no connection is made in 1 second; continue running
+                continue
 
 # Function to save trackbar parameters
 def save_parameters():
