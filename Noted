@@ -211,6 +211,8 @@ def main():
     ocr_thread = threading.Thread(target=process_ocr, daemon=True)
     ocr_thread.start()
 
+    last_processed_frame = None  # Variable to hold the last processed frame
+
     try:
         if real_time_mode:
             while True:
@@ -228,13 +230,18 @@ def main():
 
                 # Check if there's a processed frame to display
                 if not processed_frame_queue.empty():
-                    processed_frame = processed_frame_queue.get()
-                    cv2.imshow('OCR Combined Video', processed_frame)
+                    last_processed_frame = processed_frame_queue.get()  # Update the last processed frame
+
+                if last_processed_frame is not None:
+                    # Combine the original frame with the last processed frame
+                    combined = np.hstack((frame, last_processed_frame[:, frame.shape[1]:]))
                 else:
-                    # If no processed frame is ready, show the original frame on the left and blank space on the right
+                    # If no processed frame is available yet, show the original frame with blank space on the right
                     blank_image = np.zeros_like(frame)
                     combined = np.hstack((frame, blank_image))
-                    cv2.imshow('OCR Combined Video', combined)
+
+                # Display the combined frame
+                cv2.imshow('OCR Combined Video', combined)
 
                 # Get the most stable OCR result from history
                 stable_text = get_stabilized_text(detected_text_history)
@@ -258,6 +265,7 @@ def main():
         else:
             if os.path.exists(image_path):
                 image = cv2.imread(image_path)
+                last_processed_frame = None
                 while True:
                     # Add the image to the queue for OCR processing
                     if not frame_queue.full():
@@ -265,13 +273,18 @@ def main():
 
                     # Check if there's a processed frame to display
                     if not processed_frame_queue.empty():
-                        processed_frame = processed_frame_queue.get()
-                        cv2.imshow('OCR Combined Video', processed_frame)
+                        last_processed_frame = processed_frame_queue.get()
+
+                    if last_processed_frame is not None:
+                        # Combine the original image with the last processed frame
+                        combined = np.hstack((image, last_processed_frame[:, image.shape[1]:]))
                     else:
-                        # If no processed frame is ready, show the original frame on the left and blank space on the right
+                        # If no processed frame is available yet, show the original frame with blank space on the right
                         blank_image = np.zeros_like(image)
                         combined = np.hstack((image, blank_image))
-                        cv2.imshow('OCR Combined Video', combined)
+
+                    # Display the combined frame
+                    cv2.imshow('OCR Combined Video', combined)
 
                     # Get the most stable OCR result from history
                     stable_text = get_stabilized_text(detected_text_history)
