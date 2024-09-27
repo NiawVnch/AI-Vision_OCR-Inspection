@@ -36,8 +36,9 @@ PLC_IP = "0.0.0.0"  # The server IP address (0.0.0.0 listens to all interfaces)
 PLC_PORT = 5000      # The port to listen to PLC signals
 plc_trigger_received = False  # Flag for when PLC sends a trigger
 
-# Queue for handling frames asynchronously
-frame_queue = queue.Queue(maxsize=5)  # Max size to prevent too many frames piling up
+# Queues for handling frames and processed results asynchronously
+frame_queue = queue.Queue(maxsize=5)  # For unprocessed frames
+processed_frame_queue = queue.Queue(maxsize=5)  # For processed frames
 
 # Function to start the TCP/IP server and listen for PLC trigger
 def plc_server():
@@ -189,6 +190,15 @@ def process_ocr():
         # Add OCR result to history
         detected_text_history.append(detected_text)
 
+        # Create the combined display image (original + threshold)
+        threshold_bgr = cv2.cvtColor(morphed, cv2.COLOR_GRAY2BGR)  # Convert thresholded image to BGR
+        resized_thresh = cv2.resize(threshold_bgr, (frame.shape[1], frame.shape[0]))  # Resize to match original
+        combined = np.hstack((frame, resized_thresh))  # Combine original and threshold
+
+        # Put the combined frame in the processed_frame_queue
+        if not processed_frame_queue.full():
+            processed_frame_queue.put(combined)
+
 # Main function to handle real-time video capture and display
 def main():
     global plc_trigger_received
@@ -208,12 +218,14 @@ def main():
                 if not ret:
                     break
 
-                # Display the frame immediately (don't wait for OCR)
-                cv2.imshow('OCR Real-time Threshold Video', frame)
-
                 # Add the frame to the queue for OCR processing
                 if not frame_queue.full():
                     frame_queue.put(frame)
+
+                # Check if there's a processed frame to display
+                if not processed_frame_queue.empty():
+                    processed_frame = processed_frame_queue.get()
+                    cv2.imshow('OCR Real-time Threshold Video', processed_frame)
 
                 # Get the most stable OCR result from history
                 stable_text = get_stabilized_text(detected_text_history)
@@ -241,6 +253,11 @@ def main():
                     # Add the image to the queue for OCR processing
                     if not frame_queue.full():
                         frame_queue.put(image)
+
+                    # Check if there's a processed frame to display
+                    if not processed_frame_queue.empty():
+                        processed_frame = processed_frame_queue.get()
+                        cv2.imshow('OCR Real-time Threshold Video', processed_frame)
 
                     # Get the most stable OCR result from history
                     stable_text = get_stabilized_text(detected_text_history)
