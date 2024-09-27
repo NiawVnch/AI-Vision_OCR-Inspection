@@ -25,7 +25,7 @@ if real_time_mode:
 
 # Define the expected OCR pattern
 expected_pattern = r'A\d{10}'
-detected_text_history = deque(maxlen=10)
+detected_text_history = deque(maxlen=10)  # Keep track of previous OCR results
 
 # TCP/IP server settings for PLC trigger
 PLC_IP = "0.0.0.0"  # The server IP address (0.0.0.0 listens to all interfaces)
@@ -36,7 +36,11 @@ plc_trigger_received = False  # Flag for when PLC sends a trigger
 frame_queue = queue.Queue(maxsize=5)
 processed_frame_queue = queue.Queue(maxsize=5)
 
-# PLC server function to receive triggers
+# Shared variable for stable_text
+stable_text_lock = threading.Lock()
+stable_text = ""
+
+# Function to handle PLC trigger
 def plc_server():
     global plc_trigger_received
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
@@ -129,10 +133,9 @@ def get_stabilized_text(history):
 
 # OCR processing in a separate thread
 def process_ocr():
-    global detected_text_history
+    global detected_text_history, stable_text
     while True:
         frame = frame_queue.get()
-        detected_text = ""
 
         # Process frame for OCR
         x1, y1, x2, y2 = crop_coords
@@ -161,6 +164,10 @@ def process_ocr():
         detected_text = ''.join(filter(str.isalnum, ocr_result))
         detected_text_history.append(detected_text)
 
+        # Lock and update the stable text
+        with stable_text_lock:
+            stable_text = get_stabilized_text(detected_text_history)
+
         # Draw bounding boxes
         h, w = morphed.shape
         threshold_bgr = cv2.cvtColor(morphed, cv2.COLOR_GRAY2BGR)
@@ -178,14 +185,12 @@ def process_ocr():
         if not processed_frame_queue.full():
             processed_frame_queue.put(combined)
 
-# Main function to handle video and display
+# Main function to handle real-time video capture and display
 def main():
-    global plc_trigger_received
-    stable_text = ""
-
-    # Start PLC and OCR processing threads
+    global plc_trigger_received, stable_text
     plc_thread = threading.Thread(target=plc_server, daemon=True)
     plc_thread.start()
+
     ocr_thread = threading.Thread(target=process_ocr, daemon=True)
     ocr_thread.start()
 
@@ -198,7 +203,6 @@ def main():
                 if not ret:
                     break
 
-                # Draw crop rectangle
                 x1, y1, x2, y2 = crop_coords
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)
 
@@ -214,11 +218,10 @@ def main():
                     blank_image = np.zeros_like(frame)
                     combined = np.hstack((frame, blank_image))
 
-                if len(detected_text_history) > 0:
-                    stable_text = get_stabilized_text(detected_text_history)
-
-                cv2.putText(frame, f"Detected: {stable_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, stable_text) else 'Not match'}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                # Access and display stable_text safely
+                with stable_text_lock:
+                    cv2.putText(frame, f"Detected: {stable_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, stable_text) else 'Not match'}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
                 cv2.imshow('OCR Combined Video', combined)
 
@@ -235,43 +238,6 @@ def main():
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
-        else:
-            if os.path.exists(image_path):
-                image = cv2.imread(image_path)
-                last_processed_frame = None
-                while True:
-                    if not frame_queue.full():
-                        frame_queue.put(image)
-
-                    if not processed_frame_queue.empty():
-                        last_processed_frame = processed_frame_queue.get()
-
-                    if last_processed_frame is not None:
-                        combined = np.hstack((image, last_processed_frame[:, image.shape[1]:]))
-                    else:
-                        blank_image = np.zeros_like(image)
-                        combined = np.hstack((image, blank_image))
-
-                    if len(detected_text_history) > 0:
-                        stable_text = get_stabilized_text(detected_text_history)
-
-                    cv2.putText(image, f"Detected: {stable_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                    cv2.putText(image, f"Match: {'OK' if re.match(expected_pattern, stable_text) else 'Not match'}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-                    cv2.imshow('OCR Combined Video', combined)
-
-                    if cv2.waitKey(1) & 0xFF == ord('c'):
-                        print(f"OCR Capture: {stable_text}")
-                        if stable_text:
-                            send_ocr_result(stable_text)
-
-                    if cv2.waitKey(1) & 0xFF == ord('q'):
-                        break
-
-                save_parameters()
-            else:
-                print("Image file not found.")
-
     finally:
         if real_time_mode and cap.isOpened():
             cap.release()
