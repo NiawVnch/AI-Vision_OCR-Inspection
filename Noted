@@ -8,7 +8,6 @@ import socket
 from collections import deque
 import threading
 import queue
-import time
 
 # Set the mode
 real_time_mode = True
@@ -37,32 +36,26 @@ plc_trigger_received = False  # Flag for when PLC sends a trigger
 frame_queue = queue.Queue(maxsize=5)
 processed_frame_queue = queue.Queue(maxsize=5)
 
-# Shared variable for detected text
-detected_text_lock = threading.Lock()
-detected_text = ""  # Initialize globally for real-time detection
+# Shared variable for stable_text
+stable_text_lock = threading.Lock()
+stable_text = ""  # Initialized globally
 
-# Function to handle PLC trigger (with non-blocking behavior)
+# Function to handle PLC trigger
 def plc_server():
     global plc_trigger_received
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
         server_socket.bind((PLC_IP, PLC_PORT))
         server_socket.listen(1)
-        server_socket.settimeout(1)  # Non-blocking, 1 second timeout
         print(f"Listening for PLC trigger on {PLC_IP}:{PLC_PORT}...")
-
         while True:
-            try:
-                conn, addr = server_socket.accept()
-                with conn:
-                    print(f"Connection from {addr}")
-                    data = conn.recv(1024)
-                    if data:
-                        print("PLC trigger received!")
-                        plc_trigger_received = True
-                        conn.sendall(b'Trigger received')
-            except socket.timeout:
-                # Timeout occurs if no connection is made in 1 second; continue running
-                continue
+            conn, addr = server_socket.accept()
+            with conn:
+                print(f"Connection from {addr}")
+                data = conn.recv(1024)
+                if data:
+                    print("PLC trigger received!")
+                    plc_trigger_received = True
+                    conn.sendall(b'Trigger received')
 
 # Function to save trackbar parameters
 def save_parameters():
@@ -129,9 +122,18 @@ def send_ocr_result(result):
     except (socket.timeout, socket.error) as e:
         print(f"Error: Could not send OCR result to server. {e}")
 
+# Get the most frequent OCR result
+def get_stabilized_text(history):
+    if not history:
+        return ""
+    text_counts = {}
+    for text in history:
+        text_counts[text] = text_counts.get(text, 0) + 1
+    return max(text_counts, key=text_counts.get)
+
 # OCR processing in a separate thread
 def process_ocr():
-    global detected_text
+    global detected_text_history, stable_text
     while True:
         frame = frame_queue.get()
 
@@ -160,8 +162,13 @@ def process_ocr():
         custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
         ocr_result = pytesseract.image_to_string(morphed, config=custom_config)
         detected_text = ''.join(filter(str.isalnum, ocr_result))
+        detected_text_history.append(detected_text)
 
-        # Draw bounding boxes on the OCR processed image
+        # Lock and update the stable text
+        with stable_text_lock:
+            stable_text = get_stabilized_text(detected_text_history)
+
+        # Draw bounding boxes
         h, w = morphed.shape
         threshold_bgr = cv2.cvtColor(morphed, cv2.COLOR_GRAY2BGR)
         boxes = pytesseract.image_to_boxes(morphed, config=custom_config)
@@ -173,14 +180,14 @@ def process_ocr():
             cv2.rectangle(threshold_bgr, (x, y2), (x2, y), (0, 255, 0), 2)
 
         resized_thresh = cv2.resize(threshold_bgr, (frame.shape[1], frame.shape[0]))
-        combined = np.hstack((frame, resized_thresh))
 
+        # Place the processed threshold image into the queue
         if not processed_frame_queue.full():
-            processed_frame_queue.put(combined)
+            processed_frame_queue.put(resized_thresh)
 
 # Main loop
 def main():
-    global plc_trigger_received, detected_text
+    global plc_trigger_received, stable_text
 
     plc_thread = threading.Thread(target=plc_server, daemon=True)
     plc_thread.start()
@@ -200,34 +207,37 @@ def main():
                 x1, y1, x2, y2 = crop_coords
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)
 
+                # Use frame.copy() to avoid threading issues
                 if not frame_queue.full():
-                    frame_queue.put(frame)
+                    frame_queue.put(frame.copy())
+
+                # Lock and display stable_text
+                with stable_text_lock:
+                    cv2.putText(frame, f"Detected: {stable_text}", (10, 30),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, stable_text) else 'Not match'}",
+                                (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
                 if not processed_frame_queue.empty():
                     last_processed_frame = processed_frame_queue.get()
 
                 if last_processed_frame is not None:
-                    combined = np.hstack((frame, last_processed_frame[:, frame.shape[1]:]))
+                    combined = np.hstack((frame, last_processed_frame))
                 else:
                     blank_image = np.zeros_like(frame)
                     combined = np.hstack((frame, blank_image))
 
-                # Display the real-time OCR result (detected_text) on the original video
-                cv2.putText(frame, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-                cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, detected_text) else 'Not match'}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
-                # Display the combined frame
                 cv2.imshow('OCR Combined Video', combined)
 
                 if cv2.waitKey(1) & 0xFF == ord('c'):
-                    print(f"OCR Capture: {detected_text}")
-                    if detected_text:
-                        send_ocr_result(detected_text)
+                    print(f"OCR Capture: {stable_text}")
+                    if stable_text:
+                        send_ocr_result(stable_text)
 
                 if plc_trigger_received:
-                    print(f"PLC-triggered OCR Capture: {detected_text}")
-                    if detected_text:
-                        send_ocr_result(detected_text)
+                    print(f"PLC-triggered OCR Capture: {stable_text}")
+                    if stable_text:
+                        send_ocr_result(stable_text)
                     plc_trigger_received = False
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
