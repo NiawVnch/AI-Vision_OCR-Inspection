@@ -214,6 +214,7 @@ def process_ocr():
 # Main function to handle real-time video capture and display
 def main():
     global plc_trigger_received
+    stable_text = ""  # Initialize stable_text
 
     # Start PLC trigger listener in a separate thread
     plc_thread = threading.Thread(target=plc_server, daemon=True)
@@ -253,7 +254,8 @@ def main():
                     combined = np.hstack((frame, blank_image))
 
                 # Get the most stable OCR result from history
-                stable_text = get_stabilized_text(detected_text_history)
+                if len(detected_text_history) > 0:
+                    stable_text = get_stabilized_text(detected_text_history)
 
                 # Display detected text on the original frame (left side)
                 cv2.putText(frame, f"Detected: {stable_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
@@ -300,7 +302,8 @@ def main():
                         combined = np.hstack((image, blank_image))
 
                     # Get the most stable OCR result from history
-                    stable_text = get_stabilized_text(detected_text_history)
+                    if len(detected_text_history) > 0:
+                        stable_text = get_stabilized_text(detected_text_history)
 
                     # Display detected text on the original frame (left side)
                     cv2.putText(image, f"Detected: {stable_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
