@@ -25,6 +25,7 @@ if real_time_mode:
 
 # Define the expected OCR pattern
 expected_pattern = r'A\d{10}'
+detected_text_history = deque(maxlen=10)  # Keep track of previous OCR results
 
 # TCP/IP server settings for PLC trigger
 PLC_IP = "0.0.0.0"  # The server IP address (0.0.0.0 listens to all interfaces)
@@ -34,6 +35,10 @@ plc_trigger_received = False  # Flag for when PLC sends a trigger
 # Queues for handling frames and processed results asynchronously
 frame_queue = queue.Queue(maxsize=5)
 processed_frame_queue = queue.Queue(maxsize=5)
+
+# Shared variable for detected text
+detected_text_lock = threading.Lock()
+detected_text = ""  # Initialize globally for real-time detection
 
 # Function to handle PLC trigger
 def plc_server():
@@ -119,6 +124,7 @@ def send_ocr_result(result):
 
 # OCR processing in a separate thread
 def process_ocr():
+    global detected_text
     while True:
         frame = frame_queue.get()
 
@@ -162,16 +168,12 @@ def process_ocr():
         resized_thresh = cv2.resize(threshold_bgr, (frame.shape[1], frame.shape[0]))
         combined = np.hstack((frame, resized_thresh))
 
-        # Display detected text on the original frame (left side)
-        cv2.putText(frame, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, detected_text) else 'Not match'}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-
         if not processed_frame_queue.full():
             processed_frame_queue.put(combined)
 
 # Main loop
 def main():
-    global plc_trigger_received
+    global plc_trigger_received, detected_text
 
     plc_thread = threading.Thread(target=plc_server, daemon=True)
     plc_thread.start()
@@ -202,6 +204,10 @@ def main():
                 else:
                     blank_image = np.zeros_like(frame)
                     combined = np.hstack((frame, blank_image))
+
+                # Display the real-time OCR result (detected_text) on the original video
+                cv2.putText(frame, f"Detected: {detected_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, detected_text) else 'Not match'}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
                 # Display the combined frame
                 cv2.imshow('OCR Combined Video', combined)
