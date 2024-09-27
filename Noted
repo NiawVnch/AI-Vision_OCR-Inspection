@@ -111,6 +111,8 @@ def remove_noise(image, kernel_size):
 
 # Function to apply morphological operations to the binary image
 def apply_morphology(binary_image, kernel_size):
+    if kernel_size < 1:
+        kernel_size = 1  # Ensure kernel_size is at least 1
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
     morphed = cv2.morphologyEx(binary_image, cv2.MORPH_CLOSE, kernel)
     return morphed
@@ -130,6 +132,8 @@ def send_ocr_result(result):
 
 # Function to calculate average OCR result (stabilize readings)
 def get_stabilized_text(history):
+    if not history:  # Ensure there is history before processing
+        return ""  # Return empty string if history is empty
     text_counts = {}
     for text in history:
         text_counts[text] = text_counts.get(text, 0) + 1
@@ -264,33 +268,3 @@ def main():
 
 if __name__ == "__main__":
     main()
--------------------------------
-/home/linaro/.pyenv/versions/3.11.9/bin/python "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev6.py"
-linaro@linaro-alip:~/Downloads/AI-Vision_OCR-Inspection-main$ /home/linaro/.pyenv/versions/3.11.9/bin/python "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev6.py"
-Loaded parameters: ['(362, 174, 522, 214)', '11', '12', '6', '0', '1']
-Listening for PLC trigger on 0.0.0.0:5000...
-Exception in thread Thread-2 (process_ocr):
-Traceback (most recent call last):
-  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
-    self.run()
-  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/threading.py", line 982, in run
-    self._target(*self._args, **self._kwargs)
-  File "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev6.py", line 176, in process_ocr
-    morphed = apply_morphology(thresh, morph_kernel_size)
-              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev6.py", line 114, in apply_morphology
-    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (kernel_size, kernel_size))
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-cv2.error: OpenCV(4.10.0) /io/opencv/modules/imgproc/src/filterengine.hpp:367: error: (-215:Assertion failed) anchor.inside(Rect(0, 0, ksize.width, ksize.height)) in function 'normalizeAnchor'
-
-Traceback (most recent call last):
-  File "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev6.py", line 266, in <module>
-    main()
-  File "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev6.py", line 215, in main
-    stable_text = get_stabilized_text(detected_text_history)
-                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev6.py", line 136, in get_stabilized_text
-    return max(text_counts, key=text_counts.get)  # Return the most frequent text
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-ValueError: max() arg is an empty sequence
-linaro@linaro-alip:~/Downloads/AI-Vision_OCR-Inspection-main$ 
