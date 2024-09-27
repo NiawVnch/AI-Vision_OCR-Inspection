@@ -1,4 +1,3 @@
-**
 import cv2
 import pytesseract
 import csv
@@ -147,7 +146,7 @@ def process_ocr():
     while True:
         # Wait for a frame from the queue
         frame = frame_queue.get()
-        
+
         # Process the frame (this is the same process_image function)
         detected_text = ""
 
