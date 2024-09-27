@@ -218,6 +218,13 @@ def main():
                 if not ret:
                     break
 
+                # Draw the crop rectangle on the original frame
+                x1, y1, x2, y2 = crop_coords
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 1)  # Green rectangle for the crop region
+
+                # Display the original frame immediately
+                cv2.imshow('OCR Real-time Threshold Video', frame)
+
                 # Add the frame to the queue for OCR processing
                 if not frame_queue.full():
                     frame_queue.put(frame)
@@ -225,7 +232,7 @@ def main():
                 # Check if there's a processed frame to display
                 if not processed_frame_queue.empty():
                     processed_frame = processed_frame_queue.get()
-                    cv2.imshow('OCR Real-time Threshold Video', processed_frame)
+                    cv2.imshow('OCR Processed Threshold Video', processed_frame)
 
                 # Get the most stable OCR result from history
                 stable_text = get_stabilized_text(detected_text_history)
@@ -257,7 +264,7 @@ def main():
                     # Check if there's a processed frame to display
                     if not processed_frame_queue.empty():
                         processed_frame = processed_frame_queue.get()
-                        cv2.imshow('OCR Real-time Threshold Video', processed_frame)
+                        cv2.imshow('OCR Processed Threshold Video', processed_frame)
 
                     # Get the most stable OCR result from history
                     stable_text = get_stabilized_text(detected_text_history)
