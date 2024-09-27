@@ -38,7 +38,7 @@ processed_frame_queue = queue.Queue(maxsize=5)
 
 # Shared variable for stable_text
 stable_text_lock = threading.Lock()
-stable_text = ""
+stable_text = ""  # Initialized globally
 
 # Function to handle PLC trigger
 def plc_server():
@@ -185,9 +185,10 @@ def process_ocr():
         if not processed_frame_queue.full():
             processed_frame_queue.put(combined)
 
-# Main function to handle real-time video capture and display
+# Main loop
 def main():
     global plc_trigger_received, stable_text
+
     plc_thread = threading.Thread(target=plc_server, daemon=True)
     plc_thread.start()
 
@@ -218,7 +219,7 @@ def main():
                     blank_image = np.zeros_like(frame)
                     combined = np.hstack((frame, blank_image))
 
-                # Access and display stable_text safely
+                # Lock and display stable_text
                 with stable_text_lock:
                     cv2.putText(frame, f"Detected: {stable_text}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                     cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, stable_text) else 'Not match'}", (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
