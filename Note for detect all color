@@ -21,6 +21,8 @@ if real_time_mode:
     cap = cv2.VideoCapture(5)
     fps = 25  # Desired frame rate (fps)
     cap.set(cv2.CAP_PROP_FPS, fps)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640*0.85)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480*0.85)
 
 # Define the expected OCR pattern
 expected_pattern = r'A\d{10}'
@@ -321,9 +323,9 @@ def main():
                 # Lock and display stable_text
                 with stable_text_lock:
                     cv2.putText(frame, f"Detected: {stable_text}", (10, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                     cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, stable_text) else 'Not match'}",
-                                (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                                (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
                 # Lock and get mean_intensity and background_type
                 with mean_intensity_lock:
@@ -332,9 +334,9 @@ def main():
 
                 # Display mean_intensity and background_type on the frame
                 cv2.putText(frame, f"Mean Intensity: {mean_intensity_display:.2f}", (10, 110),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 cv2.putText(frame, f"Background: {background_type_display}", (10, 150),
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
                 # Get the latest processed frame
                 with processed_frame_lock:
