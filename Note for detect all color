@@ -42,6 +42,11 @@ processed_frame_lock = threading.Lock()
 stable_text_lock = threading.Lock()
 stable_text = ""  # Initialized globally
 
+# Shared variables and locks for mean_intensity and background_type
+mean_intensity_lock = threading.Lock()
+mean_intensity_value = 0
+background_type_value = ''
+
 # Function to handle PLC trigger
 def plc_server():
     global plc_trigger_received
@@ -187,20 +192,20 @@ def get_stabilized_text(history):
 def detect_background_type(image):
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     mean_intensity = np.mean(gray_image)
-    print(mean_intensity)
+    # print(mean_intensity)
 
     # Define thresholds based on your specific conditions
     if mean_intensity > 120:
-        print('Light')
-        return 'Light'
-
+        # print('Light')
+        return mean_intensity, 'Light'
     else:
-        print('Dark')
-        return 'Dark'
+        # print('Dark')
+        return mean_intensity, 'Dark'
 
 # OCR processing in a separate thread
 def process_ocr():
     global detected_text_history, stable_text, latest_frame, latest_processed_frame
+    global mean_intensity_value, background_type_value
     while True:
         # Get the latest frame
         with frame_lock:
@@ -213,14 +218,19 @@ def process_ocr():
         cropped = frame[y1:y2, x1:x2]
 
         # Detect background type
-        background_type = detect_background_type(cropped)
+        mean_intensity, background_type = detect_background_type(cropped)
+
+        # Store mean_intensity and background_type in shared variables
+        with mean_intensity_lock:
+            mean_intensity_value = mean_intensity
+            background_type_value = background_type
 
         # Get the appropriate parameters based on background type
         if background_type == 'Light':
             block_size = cv2.getTrackbarPos('Block Size Light', 'OCR Combined Video')
             c_value = cv2.getTrackbarPos('C Light', 'OCR Combined Video')
             threshold_type = cv2.THRESH_BINARY_INV
-        else:  # 'black'
+        else:  # 'Dark'
             block_size = cv2.getTrackbarPos('Block Size Dark', 'OCR Combined Video')
             c_value = -cv2.getTrackbarPos('C Dark', 'OCR Combined Video')
             threshold_type = cv2.THRESH_BINARY
@@ -286,6 +296,7 @@ def process_ocr():
 # Main loop
 def main():
     global plc_trigger_received, stable_text, latest_frame, latest_processed_frame
+    global mean_intensity_value, background_type_value
 
     plc_thread = threading.Thread(target=plc_server, daemon=True)
     plc_thread.start()
@@ -313,6 +324,17 @@ def main():
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
                     cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, stable_text) else 'Not match'}",
                                 (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+
+                # Lock and get mean_intensity and background_type
+                with mean_intensity_lock:
+                    mean_intensity_display = mean_intensity_value
+                    background_type_display = background_type_value
+
+                # Display mean_intensity and background_type on the frame
+                cv2.putText(frame, f"Mean Intensity: {mean_intensity_display:.2f}", (10, 110),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                cv2.putText(frame, f"Background: {background_type_display}", (10, 150),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
                 # Get the latest processed frame
                 with processed_frame_lock:
