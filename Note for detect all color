@@ -84,13 +84,14 @@ def save_parameters():
     erosion_kernel_size = cv2.getTrackbarPos('Erosion Kernel Size', 'OCR Combined Video')
     dilation_kernel_size = cv2.getTrackbarPos('Dilation Kernel Size', 'OCR Combined Video')
     resize_scale = cv2.getTrackbarPos('Resize Scale (%)', 'OCR Combined Video')
+    min_contour_area = cv2.getTrackbarPos('Min Contour Area', 'OCR Combined Video')  # New parameter
 
     with crop_coords_lock:
         current_crop_coords = str(crop_coords)
 
     with open('parameters.csv', mode='w', newline='') as file:
         fieldnames = ['Crop Coordinate', 'Block Size Light', 'C Light', 'Block Size Dark', 'C Dark',
-                      'Blur Kernel Size', 'Erosion Kernel Size', 'Dilation Kernel Size', 'Resize Scale']
+                      'Blur Kernel Size', 'Erosion Kernel Size', 'Dilation Kernel Size', 'Resize Scale', 'Min Contour Area']
         writer = csv.DictWriter(file, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerow({'Crop Coordinate': current_crop_coords,
@@ -101,7 +102,8 @@ def save_parameters():
                          'Blur Kernel Size': blur_kernel_size,
                          'Erosion Kernel Size': erosion_kernel_size,
                          'Dilation Kernel Size': dilation_kernel_size,
-                         'Resize Scale': resize_scale})
+                         'Resize Scale': resize_scale,
+                         'Min Contour Area': min_contour_area})  # Save new parameter
 
 # Load parameters from CSV
 def load_parameters():
@@ -118,8 +120,9 @@ def load_parameters():
             erosion_kernel_size = int(params['Erosion Kernel Size'])
             dilation_kernel_size = int(params['Dilation Kernel Size'])
             resize_scale = int(params['Resize Scale'])
+            min_contour_area = int(params.get('Min Contour Area', 100))  # Load new parameter with default
             return (crop_coords, block_size_light, c_light, block_size_dark, c_dark, blur_kernel_size,
-                    erosion_kernel_size, dilation_kernel_size, resize_scale)
+                    erosion_kernel_size, dilation_kernel_size, resize_scale, min_contour_area)
     # Default values
     crop_coords = (100, 100, 720, 328)
     block_size_light = 11
@@ -130,12 +133,13 @@ def load_parameters():
     erosion_kernel_size = 1
     dilation_kernel_size = 1
     resize_scale = 100
+    min_contour_area = 100  # Default value for new parameter
     return (crop_coords, block_size_light, c_light, block_size_dark, c_dark, blur_kernel_size,
-            erosion_kernel_size, dilation_kernel_size, resize_scale)
+            erosion_kernel_size, dilation_kernel_size, resize_scale, min_contour_area)
 
 # Load parameters
 (crop_coords, block_size_light, c_light, block_size_dark, c_dark, blur_kernel_size,
- erosion_kernel_size, dilation_kernel_size, resize_scale) = load_parameters()
+ erosion_kernel_size, dilation_kernel_size, resize_scale, min_contour_area) = load_parameters()
 
 # Update and save function for trackbars
 def update_and_save(val):
@@ -168,6 +172,7 @@ cv2.createTrackbar('Blur Kernel Size', 'OCR Combined Video', blur_kernel_size, 5
 cv2.createTrackbar('Erosion Kernel Size', 'OCR Combined Video', erosion_kernel_size, 20, update_and_save)
 cv2.createTrackbar('Dilation Kernel Size', 'OCR Combined Video', dilation_kernel_size, 20, update_and_save)
 cv2.createTrackbar('Resize Scale (%)', 'OCR Combined Video', resize_scale, 300, update_and_save)
+cv2.createTrackbar('Min Contour Area', 'OCR Combined Video', min_contour_area, 1000, update_and_save)  # New trackbar
 
 # Set mouse callback
 cv2.setMouseCallback('OCR Combined Video', draw_crop_rectangle)
@@ -294,25 +299,15 @@ def process_ocr():
         dilation_kernel_size = cv2.getTrackbarPos('Dilation Kernel Size', 'OCR Combined Video')
         morphed = apply_morphology(thresh, erosion_kernel_size, dilation_kernel_size)
 
-        # ------------------------ Add Contour Size Filtering ------------------------
-        # Find contours
-        contours, hierarchy = cv2.findContours(morphed.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        # Create an empty mask to draw the filtered contours
+        # Contour filtering to eliminate small noise
+        min_contour_area = cv2.getTrackbarPos('Min Contour Area', 'OCR Combined Video')
+        contours, hierarchy = cv2.findContours(morphed, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         mask = np.zeros_like(morphed)
-
-        # Define maximum area threshold (adjust this value as needed)
-        max_area_threshold = cv2.getTrackbarPos('Max Contour Area', 'OCR Combined Video')  # New trackbar
-
-        # Draw contours that are smaller than the max_area_threshold
-        for cnt in contours:
-            area = cv2.contourArea(cnt)
-            if area < max_area_threshold:
-                cv2.drawContours(mask, [cnt], -1, 255, thickness=cv2.FILLED)
-
-        # Update morphed image with the mask
-        morphed = mask
-        # ---------------------------------------------------------------------------
+        for contour in contours:
+            area = cv2.contourArea(contour)
+            if area >= min_contour_area:
+                cv2.drawContours(mask, [contour], -1, 255, thickness=cv2.FILLED)
+        morphed = cv2.bitwise_and(morphed, mask)
 
         # Perform OCR
         custom_config = r'--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
@@ -347,9 +342,6 @@ def process_ocr():
 def main():
     global plc_trigger_received, stable_text, latest_frame, latest_processed_frame
     global mean_intensity_value, background_type_value
-
-    # Create a new trackbar for Max Contour Area
-    cv2.createTrackbar('Max Contour Area', 'OCR Combined Video', 10000, 100000, update_and_save)
 
     plc_thread = threading.Thread(target=plc_server, daemon=True)
     plc_thread.start()
