@@ -187,14 +187,16 @@ def get_stabilized_text(history):
 def detect_background_type(image):
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     mean_intensity = np.mean(gray_image)
+    print(mean_intensity)
 
     # Define thresholds based on your specific conditions
-    if mean_intensity > 200:
-        return 'white'
-    elif mean_intensity > 100:
-        return 'space_gray'
+    if mean_intensity > 120:
+        print('Light')
+        return 'Light'
+
     else:
-        return 'black'
+        print('Dark')
+        return 'Dark'
 
 # OCR processing in a separate thread
 def process_ocr():
@@ -214,7 +216,7 @@ def process_ocr():
         background_type = detect_background_type(cropped)
 
         # Get the appropriate parameters based on background type
-        if background_type == 'white' or background_type == 'space_gray':
+        if background_type == 'Light':
             block_size = cv2.getTrackbarPos('Block Size Light', 'OCR Combined Video')
             c_value = cv2.getTrackbarPos('C Light', 'OCR Combined Video')
             threshold_type = cv2.THRESH_BINARY_INV
