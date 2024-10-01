@@ -7,11 +7,12 @@ import numpy as np
 import socket
 from collections import deque
 import threading
+import time
 
 # Set the mode
 real_time_mode = True
 
-# Specify the path to the image file
+# Specify the path to the image file (unused in this code)
 image_path = "GrayCO2.JPEG"
 
 OCR = True
@@ -28,10 +29,9 @@ if real_time_mode:
 expected_pattern = r'A\d{10}'
 detected_text_history = deque(maxlen=10)  # Keep track of previous OCR results
 
-# TCP/IP server settings for PLC trigger
+# TCP/IP server settings for PLC trigger and OCR result
 PLC_IP = "0.0.0.0"  # Listen on all interfaces
-PLC_PORT = 5000      # The port to listen to PLC signals
-plc_trigger_received = False  # Flag for when PLC sends a trigger
+PLC_PORT = 5000     # The port to listen to PLC signals
 
 # Shared variables and locks for frames and processed results
 latest_frame = None
@@ -57,7 +57,10 @@ drawing = False  # True if the mouse is pressed
 ix, iy = -1, -1  # Initial x and y coordinates
 temp_crop_coords = None  # Temporary crop coordinates during drawing
 
-# Function to handle PLC trigger
+# Event to signal OCR processing completion
+ocr_processing_event = threading.Event()
+
+# Function to handle PLC connections (both trigger and sending OCR result)
 def plc_server():
     global plc_trigger_received
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
@@ -73,12 +76,23 @@ def plc_server():
                     if data:
                         message = data.decode('utf-8').strip()
                         print(f"Received message from PLC: {message}")
-                        # You can define specific messages from PLC to trigger actions
                         if message == "TRIGGER":
                             print("PLC trigger received!")
                             plc_trigger_received = True
-                            # Send acknowledgment to PLC
-                            conn.sendall(b'Trigger received')
+                            # Wait for OCR processing to complete
+                            ocr_processing_event.wait()
+                            ocr_processing_event.clear()
+                            # Get the OCR result
+                            with stable_text_lock:
+                                ocr_result = stable_text
+                            if ocr_result:
+                                # Send OCR result back to PLC
+                                conn.sendall(ocr_result.encode())
+                                print(f"Sent OCR result to PLC: {ocr_result}")
+                            else:
+                                conn.sendall(b'No OCR result available')
+                                print("No OCR result available to send to PLC.")
+                            plc_trigger_received = False
                         else:
                             print("Unknown message received from PLC.")
                             conn.sendall(b'Unknown command')
@@ -219,19 +233,6 @@ def sharpen_image(image):
                        [0, -1, 0]])
     return cv2.filter2D(src=image, ddepth=-1, kernel=kernel)
 
-# Function to send OCR result to PLC (as a client)
-def send_ocr_result_to_plc(result):
-    plc_ip = "192.168.1.5"  # Replace with PLC's IP address
-    plc_port = 502       # Replace with PLC's listening port
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(5)
-            s.connect((plc_ip, plc_port))
-            s.sendall(result.encode())
-            print(f"Sent OCR result to PLC: {result}")
-    except (socket.timeout, socket.error) as e:
-        print(f"Error: Could not send OCR result to PLC. {e}")
-
 # Get the most frequent OCR result
 def get_stabilized_text(history):
     if not history:
@@ -256,6 +257,11 @@ def process_ocr():
     global detected_text_history, stable_text, latest_frame, latest_processed_frame
     global mean_intensity_value, background_type_value
     while True:
+        # Wait until a trigger is received
+        if not plc_trigger_received:
+            time.sleep(0.1)
+            continue
+
         # Get the latest frame
         with frame_lock:
             if latest_frame is None:
@@ -353,6 +359,9 @@ def process_ocr():
         with processed_frame_lock:
             latest_processed_frame = resized_thresh
 
+        # Signal that OCR processing is complete
+        ocr_processing_event.set()
+
 # Main loop
 def main():
     global plc_trigger_received, stable_text, latest_frame, latest_processed_frame
@@ -379,10 +388,11 @@ def main():
 
                 # Lock and display stable_text
                 with stable_text_lock:
-                    cv2.putText(frame, f"Detected: {stable_text}", (10, 30),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, stable_text) else 'Not match'}",
-                                (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    display_text = stable_text
+                cv2.putText(frame, f"Detected: {display_text}", (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, display_text) else 'Not match'}",
+                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
                 # Lock and get mean_intensity and background_type
                 with mean_intensity_lock:
@@ -422,16 +432,12 @@ def main():
                 key = cv2.waitKey(1) & 0xFF
                 if key == ord('c'):
                     print(f"OCR Capture: {stable_text}")
-                    if stable_text:
-                        # Send OCR result to PLC
-                        send_ocr_result_to_plc(stable_text)
-
-                if plc_trigger_received:
-                    print(f"PLC-triggered OCR Capture: {stable_text}")
-                    if stable_text:
-                        # Send OCR result to PLC
-                        send_ocr_result_to_plc(stable_text)
-                    plc_trigger_received = False
+                    # Manually trigger OCR processing
+                    plc_trigger_received = True
+                    # Wait for OCR processing to complete
+                    ocr_processing_event.wait()
+                    ocr_processing_event.clear()
+                    print(f"OCR Result: {stable_text}")
 
                 if key == ord('q'):
                     break
