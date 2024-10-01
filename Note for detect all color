@@ -33,6 +33,9 @@ detected_text_history = deque(maxlen=10)  # Keep track of previous OCR results
 PLC_IP = "0.0.0.0"  # Listen on all interfaces
 PLC_PORT = 5000     # The port to listen to PLC signals
 
+# Define plc_trigger_received at the global scope
+plc_trigger_received = False  # Flag indicating whether a PLC trigger has been received
+
 # Shared variables and locks for frames and processed results
 latest_frame = None
 frame_lock = threading.Lock()
@@ -256,6 +259,7 @@ def detect_background_type(image):
 def process_ocr():
     global detected_text_history, stable_text, latest_frame, latest_processed_frame
     global mean_intensity_value, background_type_value
+    global plc_trigger_received  # Declare as global since we read and write to it
     while True:
         # Wait until a trigger is received
         if not plc_trigger_received:
@@ -265,6 +269,7 @@ def process_ocr():
         # Get the latest frame
         with frame_lock:
             if latest_frame is None:
+                time.sleep(0.1)
                 continue
             frame = latest_frame.copy()
 
@@ -362,10 +367,15 @@ def process_ocr():
         # Signal that OCR processing is complete
         ocr_processing_event.set()
 
+    # Signal that we're done with the trigger
+    plc_trigger_received = False
+
 # Main loop
 def main():
     global plc_trigger_received, stable_text, latest_frame, latest_processed_frame
     global mean_intensity_value, background_type_value
+    # Declare plc_trigger_received as global since we'll modify it here
+    global plc_trigger_received
 
     # Start the PLC server thread
     plc_thread = threading.Thread(target=plc_server, daemon=True)
