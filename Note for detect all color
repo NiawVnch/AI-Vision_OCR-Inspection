@@ -31,7 +31,6 @@ detected_text_history = deque(maxlen=5)  # Keep track of previous OCR results
 # TCP/IP server settings for PLC trigger
 PLC_IP = "0.0.0.0"  # The server IP address (0.0.0.0 listens to all interfaces)
 PLC_PORT = 5000     # The port to listen to PLC signals
-plc_trigger_received = False  # Flag for when PLC sends a trigger
 
 # Shared variables and locks for frames and processed results
 latest_frame = None
@@ -57,11 +56,9 @@ drawing = False  # True if the mouse is pressed
 ix, iy = -1, -1  # Initial x and y coordinates
 temp_crop_coords = None  # Temporary crop coordinates during drawing
 
-# Function to handle PLC trigger
+# Function to handle PLC trigger and send OCR result
 def plc_server():
-    global plc_trigger_received
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
-        
         server_socket.bind((PLC_IP, PLC_PORT))
         server_socket.listen(1)
         print(f"Listening for PLC trigger on {PLC_IP}:{PLC_PORT}...")
@@ -70,11 +67,19 @@ def plc_server():
             with conn:
                 print(f"Connection from {addr}")
                 data = conn.recv(1024)
-                print("Data:",data)
+                print("Data:", data)
                 if data:
                     print("PLC trigger received!")
-                    plc_trigger_received = True
-                    conn.sendall(b'Trigger received')
+                    # Get the latest stable_text
+                    with stable_text_lock:
+                        ocr_result = stable_text
+                    if ocr_result:
+                        # Send the OCR result back to the PLC
+                        conn.sendall(ocr_result.encode())
+                        print(f"Sent OCR result to PLC: {ocr_result}")
+                    else:
+                        conn.sendall(b'No OCR result available')
+                        print("No OCR result available to send")
 
 # Function to save trackbar parameters
 def save_parameters():
@@ -206,19 +211,6 @@ def sharpen_image(image):
                        [0, -1, 0]])
     return cv2.filter2D(src=image, ddepth=-1, kernel=kernel)
 
-# Function to send OCR result to server
-def send_ocr_result(result):
-    server_ip = "192.168.1.5"
-    server_port = 502
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(5)
-            s.connect((server_ip, server_port))
-            s.sendall(result.encode())
-            print(f"Sent OCR result to server: {result}")
-    except (socket.timeout, socket.error) as e:
-        print(f"Error: Could not send OCR result to server. {e}")
-
 # Get the most frequent OCR result
 def get_stabilized_text(history):
     if not history:
@@ -342,7 +334,7 @@ def process_ocr():
 
 # Main loop
 def main():
-    global plc_trigger_received, stable_text, latest_frame, latest_processed_frame
+    global stable_text, latest_frame, latest_processed_frame
     global mean_intensity_value, background_type_value
 
     plc_thread = threading.Thread(target=plc_server, daemon=True)
@@ -406,14 +398,6 @@ def main():
 
                 if cv2.waitKey(1) & 0xFF == ord('c'):
                     print(f"OCR Capture: {stable_text}")
-                    if stable_text:
-                        send_ocr_result(stable_text)
-
-                if plc_trigger_received:
-                    print(f"PLC-triggered OCR Capture: {stable_text}")
-                    if stable_text:
-                        send_ocr_result(stable_text)
-                    plc_trigger_received = False
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
