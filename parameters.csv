@@ -1,0 +1,2 @@
+Crop Coordinate,Block Size Light,C Light,Block Size Dark,C Dark,Blur Kernel Size,Erosion Kernel Size,Dilation Kernel Size,Resize Scale,Min Contour Area
+"(117, 186, 575, 278)",108,4,22,-9,7,2,1,300,45
