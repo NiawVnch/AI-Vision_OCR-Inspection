@@ -410,3 +410,31 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+/home/linaro/.pyenv/versions/3.11.9/bin/python "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev11 (All BG EthernetIP).py"
+linaro@linaro-alip:~/Downloads/AI-Vision_OCR-Inspection-main$ /home/linaro/.pyenv/versions/3.11.9/bin/python "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev11 (All BG EthernetIP).py"
+Exception in thread Thread-1 (plc_communication):
+Traceback (most recent call last):
+  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/site-packages/pycomm3/logix_driver.py", line 328, in get_plc_info
+    raise ResponseError(f"get_plc_info did not return valid data - {response.error}")
+pycomm3.exceptions.ResponseError: get_plc_info did not return valid data - Service not supported
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
+    self.run()
+  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/threading.py", line 982, in run
+    self._target(*self._args, **self._kwargs)
+  File "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev11 (All BG EthernetIP).py", line 64, in plc_communication
+    with LogixDriver(PLC_IP) as plc:
+  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/site-packages/pycomm3/cip_driver.py", line 144, in __enter__
+    self.open()
+  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/site-packages/pycomm3/logix_driver.py", line 165, in open
+    self._initialize_driver(**self._init_args)
+  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/site-packages/pycomm3/logix_driver.py", line 174, in _initialize_driver
+    self._info = self.get_plc_info()
+                 ^^^^^^^^^^^^^^^^^^^
+  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/site-packages/pycomm3/logix_driver.py", line 336, in get_plc_info
+    raise ResponseError("Failed to get PLC info") from err
+pycomm3.exceptions.ResponseError: Failed to get PLC info
