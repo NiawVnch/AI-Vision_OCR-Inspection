@@ -7,19 +7,16 @@ import numpy as np
 import threading
 import time
 from collections import deque
-from pycomm3 import LogixDriver
+from pymodbus.client.sync import ModbusTcpClient
+from pymodbus.constants import Endian
+from pymodbus.payload import BinaryPayloadBuilder
 
 # Set the mode
 real_time_mode = True
 
-# Specify the path to the image file
-image_path = "GrayCO2.JPEG"
-
-OCR = True
-
 # Initialize the camera (only used in real-time mode)
 if real_time_mode:
-    cap = cv2.VideoCapture(5)
+    cap = cv2.VideoCapture(0)  # Adjust the camera index if needed
     fps = 25  # Desired frame rate (fps)
     cap.set(cv2.CAP_PROP_FPS, fps)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(640 * 0.85))
@@ -31,8 +28,10 @@ detected_text_history = deque(maxlen=5)  # Keep track of previous OCR results
 
 # PLC settings
 PLC_IP = '192.168.1.5'  # Replace with your PLC's IP address
-PLC_TAG_TRIGGER = 'Trigger'  # Name of the PLC tag used for triggering
-PLC_TAG_RESULT = 'OCR_Result'  # Name of the PLC tag used for sending OCR result
+PLC_PORT = 502  # Modbus TCP default port
+PLC_TRIGGER_COIL = 0  # Coil address for trigger (adjust as needed)
+PLC_RESULT_REGISTER = 100  # Starting register address for OCR result (adjust as needed)
+PLC_RESULT_REGISTERS_COUNT = 20  # Number of registers to hold the OCR result
 
 # Shared variables and locks for frames and processed results
 latest_frame = None
@@ -58,30 +57,57 @@ drawing = False  # True if the mouse is pressed
 ix, iy = -1, -1  # Initial x and y coordinates
 temp_crop_coords = None  # Temporary crop coordinates during drawing
 
-# Function to handle PLC trigger and send OCR result via Ethernet/IP
+# Function to handle PLC communication via Modbus TCP
 def plc_communication():
     global stable_text
-    with LogixDriver(PLC_IP) as plc:
-        print(f"Connected to PLC at {PLC_IP}")
-        while True:
-            # Read the trigger tag from the PLC
-            trigger = plc.read(PLC_TAG_TRIGGER)
-            if trigger.Value == 1:
+    client = ModbusTcpClient(PLC_IP, port=PLC_PORT)
+    if not client.connect():
+        print(f"Failed to connect to PLC at {PLC_IP}:{PLC_PORT}")
+        return
+    print(f"Connected to PLC at {PLC_IP}:{PLC_PORT}")
+
+    while True:
+        try:
+            # Read the trigger coil from the PLC
+            response = client.read_coils(PLC_TRIGGER_COIL, 1)
+            if response.isError():
+                print(f"Error reading trigger coil: {response}")
+                time.sleep(1)
+                continue
+
+            trigger = response.bits[0]
+            if trigger:
                 print("PLC trigger received!")
                 # Get the latest stable_text
                 with stable_text_lock:
                     ocr_result = stable_text
+
                 if ocr_result:
-                    # Write the OCR result back to the PLC
-                    plc.write((PLC_TAG_RESULT, ocr_result))
-                    print(f"Sent OCR result to PLC: {ocr_result}")
+                    # Encode the OCR result into registers
+                    builder = BinaryPayloadBuilder(byteorder=Endian.Big, wordorder=Endian.Big)
+                    # Pad or truncate the string to fit into the registers
+                    max_chars = PLC_RESULT_REGISTERS_COUNT * 2  # 2 chars per register (assuming ASCII)
+                    ocr_result_padded = ocr_result.ljust(max_chars)[:max_chars]
+                    builder.add_string(ocr_result_padded.encode('ascii'))
+
+                    payload = builder.to_registers()
+                    # Write the OCR result to the PLC
+                    write_response = client.write_registers(PLC_RESULT_REGISTER, payload)
+                    if write_response.isError():
+                        print(f"Error writing OCR result to PLC: {write_response}")
+                    else:
+                        print(f"Sent OCR result to PLC: {ocr_result_padded}")
                 else:
-                    plc.write((PLC_TAG_RESULT, 'No OCR result available'))
                     print("No OCR result available to send")
-                # Reset the trigger in the PLC
-                plc.write((PLC_TAG_TRIGGER, 0))
-            # Small delay to prevent hammering the PLC
+
+                # Reset the trigger coil in the PLC
+                reset_response = client.write_coil(PLC_TRIGGER_COIL, False)
+                if reset_response.isError():
+                    print(f"Error resetting trigger coil: {reset_response}")
             time.sleep(0.1)
+        except Exception as e:
+            print(f"PLC communication error: {e}")
+            time.sleep(5)
 
 # Function to save trackbar parameters
 def save_parameters():
@@ -360,8 +386,9 @@ def main():
                 with stable_text_lock:
                     cv2.putText(frame, f"Detected: {stable_text}", (10, 30),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                    cv2.putText(frame, f"Match: {'OK' if re.match(expected_pattern, stable_text) else 'Not match'}",
-                                (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                    match_text = 'OK' if re.match(expected_pattern, stable_text) else 'Not match'
+                    cv2.putText(frame, f"Match: {match_text}", (10, 60),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
                 # Lock and get mean_intensity and background_type
                 with mean_intensity_lock:
@@ -410,31 +437,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-/home/linaro/.pyenv/versions/3.11.9/bin/python "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev11 (All BG EthernetIP).py"
-linaro@linaro-alip:~/Downloads/AI-Vision_OCR-Inspection-main$ /home/linaro/.pyenv/versions/3.11.9/bin/python "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev11 (All BG EthernetIP).py"
-Exception in thread Thread-1 (plc_communication):
-Traceback (most recent call last):
-  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/site-packages/pycomm3/logix_driver.py", line 328, in get_plc_info
-    raise ResponseError(f"get_plc_info did not return valid data - {response.error}")
-pycomm3.exceptions.ResponseError: get_plc_info did not return valid data - Service not supported
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/threading.py", line 1045, in _bootstrap_inner
-    self.run()
-  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/threading.py", line 982, in run
-    self._target(*self._args, **self._kwargs)
-  File "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev11 (All BG EthernetIP).py", line 64, in plc_communication
-    with LogixDriver(PLC_IP) as plc:
-  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/site-packages/pycomm3/cip_driver.py", line 144, in __enter__
-    self.open()
-  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/site-packages/pycomm3/logix_driver.py", line 165, in open
-    self._initialize_driver(**self._init_args)
-  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/site-packages/pycomm3/logix_driver.py", line 174, in _initialize_driver
-    self._info = self.get_plc_info()
-                 ^^^^^^^^^^^^^^^^^^^
-  File "/home/linaro/.pyenv/versions/3.11.9/lib/python3.11/site-packages/pycomm3/logix_driver.py", line 336, in get_plc_info
-    raise ResponseError("Failed to get PLC info") from err
-pycomm3.exceptions.ResponseError: Failed to get PLC info
