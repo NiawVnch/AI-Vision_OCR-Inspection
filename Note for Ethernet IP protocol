@@ -7,7 +7,7 @@ import numpy as np
 import threading
 import time
 from collections import deque
-from pymodbus.client.sync import ModbusTcpClient
+from pymodbus.client import ModbusTcpClient  # Updated import for pymodbus 3.x
 from pymodbus.constants import Endian
 from pymodbus.payload import BinaryPayloadBuilder
 
