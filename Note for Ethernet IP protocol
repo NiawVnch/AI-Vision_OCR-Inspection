@@ -508,3 +508,12 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+/home/linaro/.pyenv/versions/3.11.9/bin/python "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev11 (All BG Modbus TCP).py"
+linaro@linaro-alip:~/Downloads/AI-Vision_OCR-Inspection-main$ /home/linaro/.pyenv/versions/3.11.9/bin/python "/home/linaro/Downloads/AI-Vision_OCR-Inspection-main/Adaptive Adjustmen for Marker inspection with OCR_rev11 (All BG Modbus TCP).py"
+Connected to PLC at 192.168.1.5:888
+Error reading trigger coil: Modbus Error: [Input/Output] Modbus Error: [Invalid Message] No response received, expected at least 8 bytes (0 received)
+Error reading trigger coil: Modbus Error: [Input/Output] No Response received from the remote unit/Unable to decode response
+Error reading trigger coil: Modbus Error: [Input/Output] No Response received from the remote unit/Unable to decode response
+Error reading trigger coil: Modbus Error: [Input/Output] No Response received from the remote unit/Unable to decode response
+Error reading trigger coil: Modbus Error: [Input/Output] No Response received from the remote unit/Unable to decode response
