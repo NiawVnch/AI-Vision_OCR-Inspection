@@ -57,6 +57,34 @@ drawing = False  # True if the mouse is pressed
 ix, iy = -1, -1  # Initial x and y coordinates
 temp_crop_coords = None  # Temporary crop coordinates during drawing
 
+# Function to handle each PLC connection
+def handle_plc_connection(conn, addr):
+    print(f"Connection from {addr}")
+    try:
+        while True:
+            data = conn.recv(1024)
+            if not data:
+                print(f"Connection closed by PLC: {addr}")
+                break
+            print("Data:", data)
+            if data:
+                print("PLC trigger received!")
+                # Get the latest stable_text
+                with stable_text_lock:
+                    ocr_result = stable_text
+                if ocr_result:
+                    # Send the OCR result back to the PLC
+                    time.sleep(2)  # Adjust delay as needed
+                    conn.sendall(ocr_result.encode())
+                    print(f"Sent OCR result to PLC: {ocr_result}")
+                else:
+                    conn.sendall(b'No OCR result available')
+                    print("No OCR result available to send")
+    except ConnectionResetError:
+        print(f"Connection reset by PLC: {addr}")
+    finally:
+        conn.close()
+
 # Function to handle PLC trigger and send OCR result
 def plc_server():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
@@ -65,23 +93,7 @@ def plc_server():
         print(f"Listening for PLC trigger on {PLC_IP}:{PLC_PORT}...")
         while True:
             conn, addr = server_socket.accept()
-            with conn:
-                print(f"Connection from {addr}")
-                data = conn.recv(1024)
-                print("Data:", data)
-                if data:
-                    print("PLC trigger received!")
-                    # Get the latest stable_text
-                    with stable_text_lock:
-                        ocr_result = stable_text
-                    if ocr_result:
-                        # Send the OCR result back to the PLC
-                        time.sleep(2)
-                        conn.sendall(ocr_result.encode())
-                        print(f"Sent OCR result to PLC: {ocr_result}")
-                    else:
-                        conn.sendall(b'No OCR result available')
-                        print("No OCR result available to send")
+            threading.Thread(target=handle_plc_connection, args=(conn, addr), daemon=True).start()
 
 # Function to save trackbar parameters
 def save_parameters():
