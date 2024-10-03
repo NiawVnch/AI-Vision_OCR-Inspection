@@ -57,180 +57,69 @@ drawing = False  # True if the mouse is pressed
 ix, iy = -1, -1  # Initial x and y coordinates
 temp_crop_coords = None  # Temporary crop coordinates during drawing
 
+# Store the connection globally so we can send data manually
+plc_connection = None
+plc_address = None
+plc_connected = False
+
 # Function to handle PLC trigger and send OCR result
+def handle_plc_connection(conn, addr):
+    global plc_connection, plc_address, plc_connected
+    plc_connection = conn
+    plc_address = addr
+    plc_connected = True
+    print(f"Connection established with {addr}")
+    try:
+        while True:
+            # Receive the trigger signal from PLC
+            data = conn.recv(1024)
+            if data:
+                print(f"Received trigger from PLC: {data.decode()}")
+                # Simulate OCR processing delay
+                time.sleep(2)  # Reduced delay for OCR result processing
+                # Send back the OCR result
+                with stable_text_lock:
+                    response = stable_text.encode()  # Simulate sending the latest OCR result
+                conn.sendall(response)
+                print(f"Sent OCR result: {response.decode()}")
+            else:
+                print(f"Connection closed by PLC: {addr}")
+                break
+    except ConnectionResetError:
+        print(f"Connection lost with PLC: {addr}")
+    finally:
+        plc_connected = False
+        plc_connection = None
+        plc_address = None
+
+# TCP Server to listen for PLC triggers
 def plc_server():
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server_socket:
         server_socket.bind((PLC_IP, PLC_PORT))
         server_socket.listen(1)
-        print(f"Listening for PLC trigger on {PLC_IP}:{PLC_PORT}...")
+        print(f"Tinker Board server listening on {PLC_IP}:{PLC_PORT}...")
         while True:
             conn, addr = server_socket.accept()
-            with conn:
-                print(f"Connection from {addr}")
-                data = conn.recv(1024)
-                print("Data:", data)
-                if data:
-                    print("PLC trigger received!")
-                    # Get the latest stable_text
-                    with stable_text_lock:
-                        ocr_result = stable_text
-                    if ocr_result:
-                        # Send the OCR result back to the PLC
-                        time.sleep(10)
-                        conn.sendall(ocr_result.encode())
-                        print(f"Sent OCR result to PLC: {ocr_result}")
-                    else:
-                        conn.sendall(b'No OCR result available')
-                        print("No OCR result available to send")
+            threading.Thread(target=handle_plc_connection, args=(conn, addr)).start()
 
-# Function to save trackbar parameters
-def save_parameters():
-    block_size_light = cv2.getTrackbarPos('Block Size Light', 'OCR Combined Video')
-    c_light = cv2.getTrackbarPos('C Light', 'OCR Combined Video')
-    block_size_dark = cv2.getTrackbarPos('Block Size Dark', 'OCR Combined Video')
-    c_dark = -cv2.getTrackbarPos('C Dark', 'OCR Combined Video')  # Stored as negative value
-    blur_kernel_size = cv2.getTrackbarPos('Blur Kernel Size', 'OCR Combined Video')
-    erosion_kernel_size = cv2.getTrackbarPos('Erosion Kernel Size', 'OCR Combined Video')
-    dilation_kernel_size = cv2.getTrackbarPos('Dilation Kernel Size', 'OCR Combined Video')
-    resize_scale = cv2.getTrackbarPos('Resize Scale (%)', 'OCR Combined Video')
-    min_contour_area = cv2.getTrackbarPos('Min Contour Area', 'OCR Combined Video')  # New parameter
+# Function to manually send OCR result when "c" is pressed
+def manual_ocr_sender():
+    global plc_connection, plc_connected
 
-    with crop_coords_lock:
-        current_crop_coords = str(crop_coords)
+    print("Press 'c' to manually send the OCR result to the connected PLC.")
 
-    with open('parameters.csv', mode='w', newline='') as file:
-        fieldnames = ['Crop Coordinate', 'Block Size Light', 'C Light', 'Block Size Dark', 'C Dark',
-                      'Blur Kernel Size', 'Erosion Kernel Size', 'Dilation Kernel Size', 'Resize Scale', 'Min Contour Area']
-        writer = csv.DictWriter(file, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerow({'Crop Coordinate': current_crop_coords,
-                         'Block Size Light': block_size_light,
-                         'C Light': c_light,
-                         'Block Size Dark': block_size_dark,
-                         'C Dark': c_dark,
-                         'Blur Kernel Size': blur_kernel_size,
-                         'Erosion Kernel Size': erosion_kernel_size,
-                         'Dilation Kernel Size': dilation_kernel_size,
-                         'Resize Scale': resize_scale,
-                         'Min Contour Area': min_contour_area})  # Save new parameter
-
-# Load parameters from CSV
-def load_parameters():
-    if os.path.exists('parameters.csv'):
-        with open('parameters.csv', mode='r') as file:
-            reader = csv.DictReader(file)
-            params = next(reader)
-            crop_coords = eval(params['Crop Coordinate'])
-            block_size_light = int(params['Block Size Light'])
-            c_light = int(params['C Light'])
-            block_size_dark = int(params['Block Size Dark'])
-            c_dark = int(params['C Dark'])  # Already negative
-            blur_kernel_size = int(params['Blur Kernel Size'])
-            erosion_kernel_size = int(params['Erosion Kernel Size'])
-            dilation_kernel_size = int(params['Dilation Kernel Size'])
-            resize_scale = int(params['Resize Scale'])
-            min_contour_area = int(params.get('Min Contour Area', 100))  # Load new parameter with default
-            return (crop_coords, block_size_light, c_light, block_size_dark, c_dark, blur_kernel_size,
-                    erosion_kernel_size, dilation_kernel_size, resize_scale, min_contour_area)
-    # Default values
-    crop_coords = (100, 100, 720, 328)
-    block_size_light = 11
-    c_light = 2
-    block_size_dark = 11
-    c_dark = -2
-    blur_kernel_size = 5
-    erosion_kernel_size = 1
-    dilation_kernel_size = 1
-    resize_scale = 100
-    min_contour_area = 100  # Default value for new parameter
-    return (crop_coords, block_size_light, c_light, block_size_dark, c_dark, blur_kernel_size,
-            erosion_kernel_size, dilation_kernel_size, resize_scale, min_contour_area)
-
-# Load parameters
-(crop_coords, block_size_light, c_light, block_size_dark, c_dark, blur_kernel_size,
- erosion_kernel_size, dilation_kernel_size, resize_scale, min_contour_area) = load_parameters()
-
-# Update and save function for trackbars
-def update_and_save(val):
-    save_parameters()
-
-# Mouse callback function for drawing the crop rectangle
-def draw_crop_rectangle(event, x, y, flags, param):
-    global ix, iy, drawing, temp_crop_coords, crop_coords
-    if event == cv2.EVENT_LBUTTONDOWN:
-        drawing = True
-        ix, iy = x, y
-        temp_crop_coords = (ix, iy, ix, iy)
-    elif event == cv2.EVENT_MOUSEMOVE:
-        if drawing:
-            temp_crop_coords = (ix, iy, x, y)
-    elif event == cv2.EVENT_LBUTTONUP:
-        drawing = False
-        temp_crop_coords = None
-        with crop_coords_lock:
-            crop_coords = (min(ix, x), min(iy, y), max(ix, x), max(iy, y))
-        save_parameters()
-
-# Create window and trackbars
-cv2.namedWindow('OCR Combined Video')
-cv2.createTrackbar('Block Size Light', 'OCR Combined Video', block_size_light, 255, update_and_save)
-cv2.createTrackbar('C Light', 'OCR Combined Video', c_light, 100, update_and_save)
-cv2.createTrackbar('Block Size Dark', 'OCR Combined Video', block_size_dark, 255, update_and_save)
-cv2.createTrackbar('C Dark', 'OCR Combined Video', abs(c_dark), 100, update_and_save)
-cv2.createTrackbar('Blur Kernel Size', 'OCR Combined Video', blur_kernel_size, 50, update_and_save)
-cv2.createTrackbar('Erosion Kernel Size', 'OCR Combined Video', erosion_kernel_size, 20, update_and_save)
-cv2.createTrackbar('Dilation Kernel Size', 'OCR Combined Video', dilation_kernel_size, 20, update_and_save)
-cv2.createTrackbar('Resize Scale (%)', 'OCR Combined Video', resize_scale, 300, update_and_save)
-cv2.createTrackbar('Min Contour Area', 'OCR Combined Video', min_contour_area, 1000, update_and_save)  # New trackbar
-
-# Set mouse callback
-cv2.setMouseCallback('OCR Combined Video', draw_crop_rectangle)
-
-# Noise removal
-def remove_noise(image, kernel_size):
-    if kernel_size % 2 == 0:
-        kernel_size += 1
-    if kernel_size < 1:
-        kernel_size = 1
-    return cv2.GaussianBlur(image, (kernel_size, kernel_size), 0)
-
-# Apply morphology
-def apply_morphology(binary_image, erosion_size, dilation_size):
-    if erosion_size < 1:
-        erosion_size = 1
-    if dilation_size < 1:
-        dilation_size = 1
-    erosion_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (erosion_size, erosion_size))
-    dilation_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (dilation_size, dilation_size))
-    eroded = cv2.erode(binary_image, erosion_kernel, iterations=1)
-    dilated = cv2.dilate(eroded, dilation_kernel, iterations=1)
-    return dilated
-
-# Function to sharpen image
-def sharpen_image(image):
-    kernel = np.array([[0, -1, 0],
-                       [-1, 5,-1],
-                       [0, -1, 0]])
-    return cv2.filter2D(src=image, ddepth=-1, kernel=kernel)
-
-# Get the most frequent OCR result
-def get_stabilized_text(history):
-    if not history:
-        return ""
-    text_counts = {}
-    for text in history:
-        text_counts[text] = text_counts.get(text, 0) + 1
-    return max(text_counts, key=text_counts.get)
-
-# Function to detect background type
-def detect_background_type(image):
-    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    mean_intensity = np.mean(gray_image)
-    # Define thresholds based on your specific conditions
-    if mean_intensity > 120:
-        return mean_intensity, 'Light'
-    else:
-        return mean_intensity, 'Dark'
+    while True:
+        if cv2.waitKey(1) & 0xFF == ord('c'):
+            if plc_connected and plc_connection:
+                with stable_text_lock:
+                    response = stable_text.encode()  # Simulate sending the latest OCR result
+                try:
+                    plc_connection.sendall(response)
+                    print(f"Manually sent OCR result: {response.decode()} to PLC: {plc_address}")
+                except BrokenPipeError:
+                    print("Error: Connection to PLC lost. Unable to send OCR result.")
+            else:
+                print("No PLC connected. Unable to send OCR result.")
 
 # OCR processing in a separate thread
 def process_ocr():
@@ -315,25 +204,6 @@ def process_ocr():
         with stable_text_lock:
             stable_text = get_stabilized_text(detected_text_history)
 
-        # Draw bounding boxes
-        h, w = morphed.shape
-        threshold_bgr = cv2.cvtColor(morphed, cv2.COLOR_GRAY2BGR)
-        boxes = pytesseract.image_to_boxes(morphed, config=custom_config)
-        for box in boxes.splitlines():
-            box = box.split()
-            if len(box) >= 5:
-                x_b, y_b, x2_b, y2_b = int(box[1]), int(box[2]), int(box[3]), int(box[4])
-                y_b = h - y_b
-                y2_b = h - y2_b
-                cv2.rectangle(threshold_bgr, (x_b, y2_b), (x2_b, y_b), (0, 255, 0), 2)
-
-        # Resize back to original frame size for display
-        resized_thresh = cv2.resize(threshold_bgr, (frame.shape[1], frame.shape[0]))
-
-        # Save the processed frame
-        with processed_frame_lock:
-            latest_processed_frame = resized_thresh
-
 # Main loop
 def main():
     global stable_text, latest_frame, latest_processed_frame
@@ -344,6 +214,9 @@ def main():
 
     ocr_thread = threading.Thread(target=process_ocr, daemon=True)
     ocr_thread.start()
+
+    manual_sender_thread = threading.Thread(target=manual_ocr_sender, daemon=True)
+    manual_sender_thread.start()
 
     try:
         if real_time_mode:
@@ -397,9 +270,6 @@ def main():
                     combined = np.hstack((frame, blank_image))
 
                 cv2.imshow('OCR Combined Video', combined)
-
-                if cv2.waitKey(1) & 0xFF == ord('c'):
-                    print(f"OCR Capture: {stable_text}")
 
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
