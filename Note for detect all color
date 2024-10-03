@@ -7,6 +7,7 @@ import numpy as np
 import socket
 from collections import deque
 import threading
+import time
 
 # Set the mode
 real_time_mode = True
@@ -30,7 +31,7 @@ detected_text_history = deque(maxlen=5)  # Keep track of previous OCR results
 
 # TCP/IP server settings for PLC trigger
 PLC_IP = "0.0.0.0"  # The server IP address (0.0.0.0 listens to all interfaces)
-PLC_PORT = 5000     # The port to listen to PLC signals
+PLC_PORT = 5000    # The port to listen to PLC signals
 
 # Shared variables and locks for frames and processed results
 latest_frame = None
@@ -75,6 +76,7 @@ def plc_server():
                         ocr_result = stable_text
                     if ocr_result:
                         # Send the OCR result back to the PLC
+                        time.sleep(10)
                         conn.sendall(ocr_result.encode())
                         print(f"Sent OCR result to PLC: {ocr_result}")
                     else:
