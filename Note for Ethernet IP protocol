@@ -6,21 +6,17 @@ import re
 import numpy as np
 import threading
 import time
-import logging
 from collections import deque
-from pymodbus.client import ModbusTcpClient  # Updated import for pymodbus 3.x
+from pymodbus.client.sync import ModbusTcpClient
 from pymodbus.constants import Endian
 from pymodbus.payload import BinaryPayloadBuilder
-
-# Set up logging
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s [%(levelname)s] %(message)s')
 
 # Set the mode
 real_time_mode = True
 
 # Initialize the camera (only used in real-time mode)
 if real_time_mode:
-    cap = cv2.VideoCapture(0)  # Adjust the camera index if needed
+    cap = cv2.VideoCapture(5)
     fps = 25  # Desired frame rate (fps)
     cap.set(cv2.CAP_PROP_FPS, fps)
     cap.set(cv2.CAP_PROP_FRAME_WIDTH, int(640 * 0.85))
@@ -67,22 +63,22 @@ def plc_communication():
     try:
         client = ModbusTcpClient(PLC_IP, port=PLC_PORT)
         if not client.connect():
-            logging.error(f"Failed to connect to PLC at {PLC_IP}:{PLC_PORT}")
+            print(f"Failed to connect to PLC at {PLC_IP}:{PLC_PORT}")
             return
-        logging.info(f"Connected to PLC at {PLC_IP}:{PLC_PORT}")
+        print(f"Connected to PLC at {PLC_IP}:{PLC_PORT}")
 
         while True:
             try:
                 # Read the trigger coil from the PLC
                 response = client.read_coils(PLC_TRIGGER_COIL, 1)
                 if response.isError():
-                    logging.error(f"Error reading trigger coil: {response}")
+                    print(f"Error reading trigger coil: {response}")
                     time.sleep(1)
                     continue
 
                 trigger = response.bits[0]
                 if trigger:
-                    logging.info("PLC trigger received!")
+                    print("PLC trigger received!")
                     # Get the latest stable_text
                     with stable_text_lock:
                         ocr_result = stable_text
@@ -99,22 +95,25 @@ def plc_communication():
                         # Write the OCR result to the PLC
                         write_response = client.write_registers(PLC_RESULT_REGISTER, payload)
                         if write_response.isError():
-                            logging.error(f"Error writing OCR result to PLC: {write_response}")
+                            print(f"Error writing OCR result to PLC: {write_response}")
                         else:
-                            logging.info(f"Sent OCR result to PLC: {ocr_result_padded}")
+                            print(f"Sent OCR result to PLC: {ocr_result_padded}")
                     else:
-                        logging.warning("No OCR result available to send")
+                        print("No OCR result available to send")
 
                     # Reset the trigger coil in the PLC
                     reset_response = client.write_coil(PLC_TRIGGER_COIL, False)
                     if reset_response.isError():
-                        logging.error(f"Error resetting trigger coil: {reset_response}")
+                        print(f"Error resetting trigger coil: {reset_response}")
                 time.sleep(0.1)
             except Exception as e:
-                logging.exception(f"PLC communication error: {e}")
+                print(f"PLC communication error inside loop: {e}")
                 time.sleep(5)
     except Exception as e:
-        logging.exception(f"Unhandled exception in plc_communication: {e}")
+        print(f"PLC communication error: {e}")
+    finally:
+        client.close()
+        print("PLC client connection closed")
 
 # Function to save trackbar parameters
 def save_parameters():
@@ -148,7 +147,7 @@ def save_parameters():
                              'Resize Scale': resize_scale,
                              'Min Contour Area': min_contour_area})  # Save new parameter
     except Exception as e:
-        logging.exception(f"Error saving parameters: {e}")
+        print(f"Error saving parameters: {e}")
 
 # Load parameters from CSV
 def load_parameters():
@@ -169,22 +168,34 @@ def load_parameters():
                 min_contour_area = int(params.get('Min Contour Area', 100))  # Load new parameter with default
                 return (crop_coords, block_size_light, c_light, block_size_dark, c_dark, blur_kernel_size,
                         erosion_kernel_size, dilation_kernel_size, resize_scale, min_contour_area)
+        # Default values
+        crop_coords = (100, 100, 720, 328)
+        block_size_light = 11
+        c_light = 2
+        block_size_dark = 11
+        c_dark = -2
+        blur_kernel_size = 5
+        erosion_kernel_size = 1
+        dilation_kernel_size = 1
+        resize_scale = 100
+        min_contour_area = 100  # Default value for new parameter
+        return (crop_coords, block_size_light, c_light, block_size_dark, c_dark, blur_kernel_size,
+                erosion_kernel_size, dilation_kernel_size, resize_scale, min_contour_area)
     except Exception as e:
-        logging.exception(f"Error loading parameters: {e}")
-
-    # Default values if loading fails
-    crop_coords = (100, 100, 720, 328)
-    block_size_light = 11
-    c_light = 2
-    block_size_dark = 11
-    c_dark = -2
-    blur_kernel_size = 5
-    erosion_kernel_size = 1
-    dilation_kernel_size = 1
-    resize_scale = 100
-    min_contour_area = 100  # Default value for new parameter
-    return (crop_coords, block_size_light, c_light, block_size_dark, c_dark, blur_kernel_size,
-            erosion_kernel_size, dilation_kernel_size, resize_scale, min_contour_area)
+        print(f"Error loading parameters: {e}")
+        # Return default values if there's an error
+        crop_coords = (100, 100, 720, 328)
+        block_size_light = 11
+        c_light = 2
+        block_size_dark = 11
+        c_dark = -2
+        blur_kernel_size = 5
+        erosion_kernel_size = 1
+        dilation_kernel_size = 1
+        resize_scale = 100
+        min_contour_area = 100
+        return (crop_coords, block_size_light, c_light, block_size_dark, c_dark, blur_kernel_size,
+                erosion_kernel_size, dilation_kernel_size, resize_scale, min_contour_area)
 
 # Load parameters
 (crop_coords, block_size_light, c_light, block_size_dark, c_dark, blur_kernel_size,
@@ -197,80 +208,106 @@ def update_and_save(val):
 # Mouse callback function for drawing the crop rectangle
 def draw_crop_rectangle(event, x, y, flags, param):
     global ix, iy, drawing, temp_crop_coords, crop_coords
-    if event == cv2.EVENT_LBUTTONDOWN:
-        drawing = True
-        ix, iy = x, y
-        temp_crop_coords = (ix, iy, ix, iy)
-    elif event == cv2.EVENT_MOUSEMOVE:
-        if drawing:
-            temp_crop_coords = (ix, iy, x, y)
-    elif event == cv2.EVENT_LBUTTONUP:
-        drawing = False
-        temp_crop_coords = None
-        with crop_coords_lock:
-            crop_coords = (min(ix, x), min(iy, y), max(ix, x), max(iy, y))
-        save_parameters()
+    try:
+        if event == cv2.EVENT_LBUTTONDOWN:
+            drawing = True
+            ix, iy = x, y
+            temp_crop_coords = (ix, iy, ix, iy)
+        elif event == cv2.EVENT_MOUSEMOVE:
+            if drawing:
+                temp_crop_coords = (ix, iy, x, y)
+        elif event == cv2.EVENT_LBUTTONUP:
+            drawing = False
+            temp_crop_coords = None
+            with crop_coords_lock:
+                crop_coords = (min(ix, x), min(iy, y), max(ix, x), max(iy, y))
+            save_parameters()
+    except Exception as e:
+        print(f"Error in draw_crop_rectangle: {e}")
 
 # Create window and trackbars
-cv2.namedWindow('OCR Combined Video')
-cv2.createTrackbar('Block Size Light', 'OCR Combined Video', block_size_light, 255, update_and_save)
-cv2.createTrackbar('C Light', 'OCR Combined Video', c_light, 100, update_and_save)
-cv2.createTrackbar('Block Size Dark', 'OCR Combined Video', block_size_dark, 255, update_and_save)
-cv2.createTrackbar('C Dark', 'OCR Combined Video', abs(c_dark), 100, update_and_save)
-cv2.createTrackbar('Blur Kernel Size', 'OCR Combined Video', blur_kernel_size, 50, update_and_save)
-cv2.createTrackbar('Erosion Kernel Size', 'OCR Combined Video', erosion_kernel_size, 20, update_and_save)
-cv2.createTrackbar('Dilation Kernel Size', 'OCR Combined Video', dilation_kernel_size, 20, update_and_save)
-cv2.createTrackbar('Resize Scale (%)', 'OCR Combined Video', resize_scale, 300, update_and_save)
-cv2.createTrackbar('Min Contour Area', 'OCR Combined Video', min_contour_area, 1000, update_and_save)  # New trackbar
+try:
+    cv2.namedWindow('OCR Combined Video')
+    cv2.createTrackbar('Block Size Light', 'OCR Combined Video', block_size_light, 255, update_and_save)
+    cv2.createTrackbar('C Light', 'OCR Combined Video', c_light, 100, update_and_save)
+    cv2.createTrackbar('Block Size Dark', 'OCR Combined Video', block_size_dark, 255, update_and_save)
+    cv2.createTrackbar('C Dark', 'OCR Combined Video', abs(c_dark), 100, update_and_save)
+    cv2.createTrackbar('Blur Kernel Size', 'OCR Combined Video', blur_kernel_size, 50, update_and_save)
+    cv2.createTrackbar('Erosion Kernel Size', 'OCR Combined Video', erosion_kernel_size, 20, update_and_save)
+    cv2.createTrackbar('Dilation Kernel Size', 'OCR Combined Video', dilation_kernel_size, 20, update_and_save)
+    cv2.createTrackbar('Resize Scale (%)', 'OCR Combined Video', resize_scale, 300, update_and_save)
+    cv2.createTrackbar('Min Contour Area', 'OCR Combined Video', min_contour_area, 1000, update_and_save)  # New trackbar
 
-# Set mouse callback
-cv2.setMouseCallback('OCR Combined Video', draw_crop_rectangle)
+    # Set mouse callback
+    cv2.setMouseCallback('OCR Combined Video', draw_crop_rectangle)
+except Exception as e:
+    print(f"Error creating window or trackbars: {e}")
 
 # Noise removal
 def remove_noise(image, kernel_size):
-    if kernel_size % 2 == 0:
-        kernel_size += 1
-    if kernel_size < 1:
-        kernel_size = 1
-    return cv2.GaussianBlur(image, (kernel_size, kernel_size), 0)
+    try:
+        if kernel_size % 2 == 0:
+            kernel_size += 1
+        if kernel_size < 1:
+            kernel_size = 1
+        return cv2.GaussianBlur(image, (kernel_size, kernel_size), 0)
+    except Exception as e:
+        print(f"Error in remove_noise: {e}")
+        return image
 
 # Apply morphology
 def apply_morphology(binary_image, erosion_size, dilation_size):
-    if erosion_size < 1:
-        erosion_size = 1
-    if dilation_size < 1:
-        dilation_size = 1
-    erosion_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (erosion_size, erosion_size))
-    dilation_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (dilation_size, dilation_size))
-    eroded = cv2.erode(binary_image, erosion_kernel, iterations=1)
-    dilated = cv2.dilate(eroded, dilation_kernel, iterations=1)
-    return dilated
+    try:
+        if erosion_size < 1:
+            erosion_size = 1
+        if dilation_size < 1:
+            dilation_size = 1
+        erosion_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (erosion_size, erosion_size))
+        dilation_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (dilation_size, dilation_size))
+        eroded = cv2.erode(binary_image, erosion_kernel, iterations=1)
+        dilated = cv2.dilate(eroded, dilation_kernel, iterations=1)
+        return dilated
+    except Exception as e:
+        print(f"Error in apply_morphology: {e}")
+        return binary_image
 
 # Function to sharpen image
 def sharpen_image(image):
-    kernel = np.array([[0, -1, 0],
-                       [-1, 5,-1],
-                       [0, -1, 0]])
-    return cv2.filter2D(src=image, ddepth=-1, kernel=kernel)
+    try:
+        kernel = np.array([[0, -1, 0],
+                           [-1, 5,-1],
+                           [0, -1, 0]])
+        return cv2.filter2D(src=image, ddepth=-1, kernel=kernel)
+    except Exception as e:
+        print(f"Error in sharpen_image: {e}")
+        return image
 
 # Get the most frequent OCR result
 def get_stabilized_text(history):
-    if not history:
+    try:
+        if not history:
+            return ""
+        text_counts = {}
+        for text in history:
+            text_counts[text] = text_counts.get(text, 0) + 1
+        return max(text_counts, key=text_counts.get)
+    except Exception as e:
+        print(f"Error in get_stabilized_text: {e}")
         return ""
-    text_counts = {}
-    for text in history:
-        text_counts[text] = text_counts.get(text, 0) + 1
-    return max(text_counts, key=text_counts.get)
 
 # Function to detect background type
 def detect_background_type(image):
-    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    mean_intensity = np.mean(gray_image)
-    # Define thresholds based on your specific conditions
-    if mean_intensity > 120:
-        return mean_intensity, 'Light'
-    else:
-        return mean_intensity, 'Dark'
+    try:
+        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        mean_intensity = np.mean(gray_image)
+        # Define thresholds based on your specific conditions
+        if mean_intensity > 120:
+            return mean_intensity, 'Light'
+        else:
+            return mean_intensity, 'Dark'
+    except Exception as e:
+        print(f"Error in detect_background_type: {e}")
+        return 0, 'Unknown'
 
 # OCR processing in a separate thread
 def process_ocr():
@@ -282,7 +319,6 @@ def process_ocr():
                 # Get the latest frame
                 with frame_lock:
                     if latest_frame is None:
-                        time.sleep(0.01)
                         continue
                     frame = latest_frame.copy()
 
@@ -304,9 +340,13 @@ def process_ocr():
                     block_size = cv2.getTrackbarPos('Block Size Light', 'OCR Combined Video')
                     c_value = cv2.getTrackbarPos('C Light', 'OCR Combined Video')
                     threshold_type = cv2.THRESH_BINARY_INV
-                else:  # 'Dark'
+                elif background_type == 'Dark':
                     block_size = cv2.getTrackbarPos('Block Size Dark', 'OCR Combined Video')
                     c_value = -cv2.getTrackbarPos('C Dark', 'OCR Combined Video')
+                    threshold_type = cv2.THRESH_BINARY
+                else:
+                    block_size = 11
+                    c_value = 2
                     threshold_type = cv2.THRESH_BINARY
 
                 # Ensure block_size is odd and greater than or equal to 3
@@ -377,10 +417,10 @@ def process_ocr():
                 with processed_frame_lock:
                     latest_processed_frame = resized_thresh
             except Exception as e:
-                logging.exception(f"Error in process_ocr loop: {e}")
-                time.sleep(1)
+                print(f"OCR processing error: {e}")
+                time.sleep(0.1)
     except Exception as e:
-        logging.exception(f"Unhandled exception in process_ocr: {e}")
+        print(f"OCR thread error: {e}")
 
 # Main loop
 def main():
@@ -399,9 +439,8 @@ def main():
                 try:
                     ret, frame = cap.read()
                     if not ret:
-                        logging.error("Failed to read frame from camera.")
-                        time.sleep(0.1)
-                        continue
+                        print("Failed to read frame from camera")
+                        break
 
                     # Update the latest frame
                     with frame_lock:
@@ -412,8 +451,8 @@ def main():
                         cv2.putText(frame, f"Detected: {stable_text}", (10, 30),
                                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                         match_text = 'OK' if re.match(expected_pattern, stable_text) else 'Not match'
-                        cv2.putText(frame, f"Match: {match_text}", (10, 60),
-                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                        cv2.putText(frame, f"Match: {match_text}",
+                                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
                     # Lock and get mean_intensity and background_type
                     with mean_intensity_lock:
@@ -452,20 +491,20 @@ def main():
 
                     key = cv2.waitKey(1) & 0xFF
                     if key == ord('c'):
-                        logging.info(f"OCR Capture: {stable_text}")
+                        print(f"OCR Capture: {stable_text}")
 
                     if key == ord('q'):
-                        logging.info("Exit signal received. Closing program.")
                         break
                 except Exception as e:
-                    logging.exception(f"Error in main loop: {e}")
-                    time.sleep(1)
+                    print(f"Error in main loop: {e}")
+                    break
     except Exception as e:
-        logging.exception(f"Unhandled exception in main: {e}")
+        print(f"Main function error: {e}")
     finally:
         if real_time_mode and cap.isOpened():
             cap.release()
         cv2.destroyAllWindows()
+        print("Program terminated gracefully")
 
 if __name__ == "__main__":
     main()
